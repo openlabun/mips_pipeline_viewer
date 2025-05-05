@@ -10,11 +10,11 @@ import { useSimulationState, useSimulationActions } from '@/context/SimulationCo
 
 export default function Home() {
   // Get state and actions from context
-  const { instructions, isRunning, currentCycle, maxCycles } = useSimulationState();
+  const { instructions, isRunning, currentCycle, maxCycles, isFinished } = useSimulationState();
   const { startSimulation, resetSimulation } = useSimulationActions();
 
-  // No need for local state for simulation control anymore
-  const simulationHasRunOrIsRunning = currentCycle > 0 || isRunning; // Track if simulation has started for display logic
+  // Simulation has started if cycle > 0
+  const hasStarted = currentCycle > 0;
 
   return (
     <div className="container mx-auto p-4 md:p-8 flex flex-col items-center space-y-8">
@@ -42,16 +42,22 @@ export default function Home() {
            {/* Ensure maxCycles is valid before displaying */}
            { maxCycles > 0 && (
               <p className="text-center text-muted-foreground mt-4">
-                Cycle: {currentCycle} / {maxCycles} {isRunning ? '(Running)' : '(Stopped)'}
+                Cycle: {currentCycle} / {maxCycles} {isFinished ? '(Finished)' : isRunning ? '(Running)' : '(Paused)'}
               </p>
             )}
         </>
       )}
        {/* Show message if reset/never run and no instructions */}
-       {!isRunning && instructions.length === 0 && simulationHasRunOrIsRunning && (
+       {!hasStarted && instructions.length === 0 && (
         <p className="text-center text-muted-foreground mt-4">
-          Simulation reset. Enter new instructions to start again.
+          Enter instructions and press Start Simulation.
         </p>
+       )}
+       {/* Show different message if reset after a run */}
+       {hasStarted && instructions.length === 0 && (
+         <p className="text-center text-muted-foreground mt-4">
+           Simulation reset. Enter new instructions to start again.
+         </p>
        )}
     </div>
   );

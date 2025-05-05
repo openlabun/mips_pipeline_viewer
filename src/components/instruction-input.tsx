@@ -2,7 +2,7 @@
 "use client";
 
 import type * as React from 'react';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
@@ -11,7 +11,6 @@ import { useSimulationActions, useSimulationState } from '@/context/SimulationCo
 import { Play, Pause, RotateCcw } from 'lucide-react';
 
 interface InstructionInputProps {
-  // Props are now simplified as actions come from context
   onInstructionsSubmit: (instructions: string[]) => void;
   onReset: () => void;
   isRunning: boolean; // Keep isRunning prop for button state logic
@@ -23,15 +22,22 @@ export function InstructionInput({ onInstructionsSubmit, onReset, isRunning }: I
   const [inputText, setInputText] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
   const { pauseSimulation, resumeSimulation } = useSimulationActions();
-  const { currentCycle, maxCycles, stageCount, instructions } = useSimulationState(); // Get cycle info from state
+  const { currentCycle, isFinished, instructions } = useSimulationState(); // Get state from context
 
-  // Calculate the cycle number when the simulation should be considered complete
-  const completionCycle = instructions.length > 0 ? instructions.length + stageCount - 1 : 0;
+  // Reset input text when instructions are cleared (e.g., on reset)
+  useEffect(() => {
+    if (instructions.length === 0) {
+      setInputText('');
+      setError(null); // Clear errors on reset as well
+    }
+  }, [instructions]);
+
 
   const hasStarted = currentCycle > 0;
-  // Consider finished if the current cycle is greater than or equal to the calculated completion cycle
-  const hasFinished = hasStarted && currentCycle >= completionCycle;
-  const canPauseResume = hasStarted && !hasFinished; // Can only pause/resume if started and not finished
+  // Can only pause/resume if started and not finished
+  const canPauseResume = hasStarted && !isFinished;
+  // Input/Start button should be disabled if simulation has started and isn't finished
+  const disableInputAndStart = hasStarted && !isFinished;
 
 
   const handleSubmit = () => {
@@ -80,15 +86,15 @@ export function InstructionInput({ onInstructionsSubmit, onReset, isRunning }: I
             rows={5}
             className="font-mono"
             // Disable input field if simulation has started and not yet finished
-            disabled={hasStarted && !hasFinished}
+            disabled={disableInputAndStart}
             aria-label="MIPS Hex Instructions Input"
           />
           {error && <p className="text-sm text-destructive">{error}</p>}
         </div>
         <div className="flex justify-between items-center gap-2">
            {/* Start Button: Disabled if started and not finished */}
-          <Button onClick={handleSubmit} disabled={hasStarted && !hasFinished} className="flex-1">
-            {hasStarted && !hasFinished ? 'Running...' : hasFinished ? 'Finished' : 'Start Simulation'}
+          <Button onClick={handleSubmit} disabled={disableInputAndStart} className="flex-1">
+             {isFinished ? 'Finished' : hasStarted ? 'Running...' : 'Start Simulation'}
           </Button>
 
           {/* Conditional Play/Pause Button: Show only when pause/resume is possible */}

@@ -4,6 +4,10 @@
 import type { PropsWithChildren } from 'react';
 import * as React from 'react';
 
+// Define the stage names (optional, but good for clarity)
+const STAGE_NAMES = ['IF', 'ID', 'EX', 'MEM', 'WB'] as const;
+type StageName = typeof STAGE_NAMES[number];
+
 // Define the shape of the context state
 interface SimulationState {
   instructions: string[];
@@ -11,6 +15,9 @@ interface SimulationState {
   maxCycles: number;
   isRunning: boolean;
   stageCount: number;
+  // Map instruction index to its current stage index (0-based) or null if not started/finished
+  instructionStages: Record<number, number | null>;
+  isFinished: boolean; // Track if simulation completed
 }
 
 // Define the shape of the context actions
@@ -25,16 +32,64 @@ interface SimulationActions {
 const SimulationStateContext = React.createContext<SimulationState | undefined>(undefined);
 const SimulationActionsContext = React.createContext<SimulationActions | undefined>(undefined);
 
-const DEFAULT_STAGE_COUNT = 5; // IF, ID, EX, MEM, WB
+const DEFAULT_STAGE_COUNT = STAGE_NAMES.length; // Use length of defined stages
+
+const initialState: SimulationState = {
+  instructions: [],
+  currentCycle: 0,
+  maxCycles: 0,
+  isRunning: false,
+  stageCount: DEFAULT_STAGE_COUNT,
+  instructionStages: {},
+  isFinished: false,
+};
+
+// Function to calculate the next state based on the current state
+const calculateNextState = (currentState: SimulationState): SimulationState => {
+  if (!currentState.isRunning || currentState.isFinished) {
+    return currentState; // No changes if not running or already finished
+  }
+
+  const nextCycle = currentState.currentCycle + 1;
+  const newInstructionStages: Record<number, number | null> = {};
+  let activeInstructions = 0;
+
+  currentState.instructions.forEach((_, index) => {
+    // Calculate the stage index for the instruction in the next cycle
+    // Instruction `index` enters stage `s` (0-based) at cycle `index + s + 1`
+    // So, in cycle `c`, the stage is `c - index - 1`
+    const stageIndex = nextCycle - index - 1;
+
+    if (stageIndex >= 0 && stageIndex < currentState.stageCount) {
+      newInstructionStages[index] = stageIndex;
+      activeInstructions++; // Count instructions currently in the pipeline
+    } else {
+      newInstructionStages[index] = null; // Not in pipeline (either hasn't started or has finished)
+    }
+  });
+
+  // The simulation completes *after* the last instruction finishes the last stage
+  const completionCycle = currentState.instructions.length > 0
+    ? currentState.instructions.length + currentState.stageCount - 1
+    : 0;
+
+  const isFinished = nextCycle > completionCycle;
+  const isRunning = !isFinished; // Stop running when finished
+
+  return {
+    ...currentState,
+    currentCycle: isFinished ? completionCycle : nextCycle, // Cap cycle at completion
+    instructionStages: newInstructionStages,
+    isRunning: isRunning,
+    isFinished: isFinished,
+  };
+};
+
 
 // Create the provider component
 export function SimulationProvider({ children }: PropsWithChildren) {
-  const [instructions, setInstructions] = React.useState<string[]>([]);
-  const [currentCycle, setCurrentCycle] = React.useState<number>(0);
-  const [maxCycles, setMaxCycles] = React.useState<number>(0);
-  const [isRunning, setIsRunning] = React.useState<boolean>(false);
+  const [simulationState, setSimulationState] = React.useState<SimulationState>(initialState);
   const intervalRef = React.useRef<NodeJS.Timeout | null>(null);
-  const stageCount = DEFAULT_STAGE_COUNT; // Keep stage count constant for now
 
   const clearTimer = () => {
     if (intervalRef.current) {
@@ -45,81 +100,94 @@ export function SimulationProvider({ children }: PropsWithChildren) {
 
   const runClock = React.useCallback(() => {
     clearTimer(); // Clear any existing timer
+    if (!simulationState.isRunning || simulationState.isFinished) return; // Don't start timer if not running or finished
+
     intervalRef.current = setInterval(() => {
-      setCurrentCycle((prevCycle) => {
-        const nextCycle = prevCycle + 1;
-        // The simulation completes *after* the last instruction finishes the last stage
-        const completionCycle = instructions.length > 0 ? instructions.length + stageCount - 1 : 0;
-        if (nextCycle > completionCycle) { // Use > completion cycle to stop *after* the last step
-          clearTimer();
-          setIsRunning(false);
-          // Keep currentCycle at maxCycles to indicate completion state for rendering
-          return completionCycle; // Stay at the final cycle count
+      setSimulationState((prevState) => {
+        const nextState = calculateNextState(prevState);
+        // Check if the simulation just finished in this step
+        if (nextState.isFinished && !prevState.isFinished) {
+           clearTimer(); // Stop the clock immediately
         }
-        return nextCycle;
+        return nextState;
       });
     }, 1000); // Advance cycle every 1 second
-  }, [instructions.length, stageCount]); // Dependencies: instructions.length and stageCount affect completionCycle
+  }, [simulationState.isRunning, simulationState.isFinished]); // Dependencies
+
 
   const resetSimulation = React.useCallback(() => {
     clearTimer();
-    setInstructions([]);
-    setCurrentCycle(0);
-    setMaxCycles(0);
-    setIsRunning(false);
+    setSimulationState(initialState);
   }, []);
 
   const startSimulation = React.useCallback((submittedInstructions: string[]) => {
-    resetSimulation(); // Reset first
-    if (submittedInstructions.length === 0) return; // Don't start if no instructions
+    clearTimer(); // Clear previous timer just in case
+    if (submittedInstructions.length === 0) {
+      resetSimulation(); // Reset if no instructions submitted
+      return;
+    }
 
-    setInstructions(submittedInstructions);
-    const calculatedMaxCycles = submittedInstructions.length > 0 ? submittedInstructions.length + stageCount - 1 : 0;
-    setMaxCycles(calculatedMaxCycles);
-    setCurrentCycle(1); // Start from cycle 1
-    setIsRunning(true);
+    const calculatedMaxCycles = submittedInstructions.length + DEFAULT_STAGE_COUNT - 1;
+    const initialStages: Record<number, number | null> = {};
+    // Initialize stages for cycle 1
+    submittedInstructions.forEach((_, index) => {
+        const stageIndex = 1 - index - 1; // Calculate stage for cycle 1
+        if (stageIndex >= 0 && stageIndex < DEFAULT_STAGE_COUNT) {
+            initialStages[index] = stageIndex;
+        } else {
+            initialStages[index] = null;
+        }
+    });
+
+
+    setSimulationState({
+      instructions: submittedInstructions,
+      currentCycle: 1, // Start from cycle 1
+      maxCycles: calculatedMaxCycles,
+      isRunning: true,
+      stageCount: DEFAULT_STAGE_COUNT,
+      instructionStages: initialStages, // Set initial stages for cycle 1
+      isFinished: false,
+    });
     // runClock will be triggered by the useEffect below when isRunning becomes true
-  }, [resetSimulation, stageCount]);
+  }, [resetSimulation]);
 
    const pauseSimulation = () => {
-    if (isRunning) {
-      clearTimer();
-      setIsRunning(false);
-    }
-  };
+     setSimulationState((prevState) => {
+       if (prevState.isRunning) {
+         clearTimer();
+         return { ...prevState, isRunning: false };
+       }
+       return prevState; // No change if already paused
+     });
+   };
 
   const resumeSimulation = () => {
-    // Resume only if not running, started, and not finished
-     // Ensure maxCycles is calculated before resuming
-     const completionCycle = instructions.length > 0 ? instructions.length + stageCount -1 : 0;
-    if (!isRunning && currentCycle > 0 && currentCycle <= completionCycle) {
-       setIsRunning(true);
-       // runClock will be triggered by useEffect
-    }
+     setSimulationState((prevState) => {
+        // Resume only if paused, started, and not finished
+        if (!prevState.isRunning && prevState.currentCycle > 0 && !prevState.isFinished) {
+            return { ...prevState, isRunning: true };
+        }
+        return prevState; // No change if running, not started, or finished
+     });
+     // runClock will be triggered by useEffect
    };
 
 
   // Effect to manage the interval timer based on isRunning state
   React.useEffect(() => {
-    if (isRunning) {
+    if (simulationState.isRunning && !simulationState.isFinished) {
       runClock();
     } else {
       clearTimer();
     }
-    // Cleanup timer on unmount or when isRunning becomes false
+    // Cleanup timer on unmount or when isRunning/isFinished changes
     return clearTimer;
-  }, [isRunning, runClock]); // Rerun effect if isRunning or runClock changes
+  }, [simulationState.isRunning, simulationState.isFinished, runClock]);
 
-  const stateValue: SimulationState = React.useMemo(
-    () => ({
-      instructions,
-      currentCycle,
-      maxCycles,
-      isRunning,
-      stageCount,
-    }),
-    [instructions, currentCycle, maxCycles, isRunning, stageCount]
-  );
+
+  // State value derived directly from simulationState
+  const stateValue: SimulationState = simulationState;
 
   const actionsValue: SimulationActions = React.useMemo(
     () => ({
@@ -128,7 +196,7 @@ export function SimulationProvider({ children }: PropsWithChildren) {
       pauseSimulation,
       resumeSimulation,
     }),
-    [startSimulation, resetSimulation, pauseSimulation, resumeSimulation]
+    [startSimulation, resetSimulation] // pause/resume don't change
   );
 
   return (

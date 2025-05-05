@@ -16,8 +16,6 @@ import { Download, Code2, Cpu, MemoryStick, CheckSquare } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useSimulationState } from '@/context/SimulationContext'; // Import context hook
 
-// Removed props interface as state comes from context now
-
 const STAGES = [
   { name: 'IF', icon: Download },
   { name: 'ID', icon: Code2 },
@@ -28,24 +26,21 @@ const STAGES = [
 
 export function PipelineVisualization() {
   // Get state from context
-  const { instructions, currentCycle: cycle, maxCycles, isRunning, stageCount } = useSimulationState();
-  const STAGE_COUNT = stageCount;
+  const {
+    instructions,
+    currentCycle: cycle,
+    maxCycles, // Max cycles determines the number of columns
+    isRunning,
+    instructionStages, // Use the pre-calculated stages
+    isFinished, // Use the finished flag from context
+  } = useSimulationState();
 
-   // Calculate the cycle number when the simulation should be considered complete
-   // This happens when the current cycle exceeds the cycle where the last instruction finishes WB
-  const completionCycle = instructions.length > 0 ? instructions.length + STAGE_COUNT - 1 : 0;
-  // Simulation is completed if it's not running AND the current cycle is at or beyond the completion cycle
-  // Ensure completionCycle > 0 to avoid triggering completed state initially when cycle is 0
-  const simulationCompleted = !isRunning && cycle >= completionCycle && completionCycle > 0;
 
-
-  // Rendering is handled in page.tsx based on instructions.length
-  // if (instructions.length === 0) return null;
-
-  // Use completionCycle for the number of columns if it's calculated, otherwise fallback to maxCycles (or 0 if not started)
-  const totalCyclesToDisplay = completionCycle > 0 ? completionCycle : maxCycles;
+  // Use maxCycles for the number of columns if it's calculated, otherwise 0
+  const totalCyclesToDisplay = maxCycles > 0 ? maxCycles : 0;
   const cycleNumbers = Array.from({ length: totalCyclesToDisplay }, (_, i) => i + 1);
 
+  // if (instructions.length === 0) return null; // Handled in page.tsx
 
   return (
     <Card className="w-full overflow-hidden">
@@ -55,7 +50,7 @@ export function PipelineVisualization() {
       <CardContent>
         <div className="overflow-x-auto">
           <Table className="min-w-max">
-            <TableCaption>MIPS instruction pipeline visualization without hazard handling.</TableCaption>
+            <TableCaption>MIPS instruction pipeline visualization</TableCaption>
             <TableHeader>
               <TableRow>
                  {/* Use bg-card for sticky header cell background */}
@@ -75,15 +70,24 @@ export function PipelineVisualization() {
                     {inst}
                   </TableCell>
                   {cycleNumbers.map((c) => {
-                    const stageIndex = c - 1 - instIndex;
-                    const isInPipeline = stageIndex >= 0 && stageIndex < STAGE_COUNT;
-                    const currentStage = isInPipeline ? STAGES[stageIndex] : null;
-                    const isCurrentCycleStage = isInPipeline && c === cycle;
+                    // Determine the stage for this instruction *at this cycle column 'c'*
+                    // Instruction 'instIndex' entered stage 's' at cycle 'instIndex + s + 1'
+                    // So, at cycle 'c', the stage index is 'c - instIndex - 1'
+                    const expectedStageIndex = c - instIndex - 1;
+                    const currentStageIndex = instructionStages[instIndex]; // Get the actual stage from context for the *current* cycle
 
-                    // Only animate if the simulation is running AND not yet completed
-                    const shouldAnimate = isCurrentCycleStage && isRunning && !simulationCompleted;
-                    // Highlight statically if it's the current stage but paused/stopped (and not completed)
-                    const shouldHighlightStatically = isCurrentCycleStage && !isRunning && !simulationCompleted;
+                    const isInPipelineAtThisCycle = expectedStageIndex >= 0 && expectedStageIndex < STAGES.length;
+                    const currentStageData = isInPipelineAtThisCycle ? STAGES[expectedStageIndex] : null;
+
+                    // Is this cell representing the instruction's *actual* current stage in the *current* simulation cycle?
+                    const isActualCurrentStage = currentStageIndex !== null && expectedStageIndex === currentStageIndex && c === cycle;
+
+                     // Only animate if the simulation is running AND not yet completed
+                     const shouldAnimate = isActualCurrentStage && isRunning && !isFinished;
+                     // Highlight statically if it's the current stage but paused/stopped (and not completed)
+                     const shouldHighlightStatically = isActualCurrentStage && !isRunning && !isFinished;
+                     // Mark past stages
+                     const isPastStage = isInPipelineAtThisCycle && c < cycle;
 
                     return (
                       <TableCell
@@ -91,22 +95,22 @@ export function PipelineVisualization() {
                         className={cn(
                           'text-center w-16 h-14 transition-colors duration-300',
                           // 1. If simulation is completed, reset all cells to default background
-                           simulationCompleted ? 'bg-background' :
+                          isFinished ? 'bg-background' :
                           // 2. If it's the current stage and running, animate
                           shouldAnimate ? 'bg-accent text-accent-foreground animate-pulse-bg' :
                           // 3. If it's the current stage but paused/stopped, highlight statically
                           shouldHighlightStatically ? 'bg-accent text-accent-foreground' :
-                          // 4. If it's a past stage in the pipeline (but not current), use secondary
-                          isInPipeline ? 'bg-secondary text-secondary-foreground' :
+                          // 4. If it's a past stage in the pipeline (and not current/finished), use secondary
+                          isPastStage ? 'bg-secondary text-secondary-foreground' :
                           // 5. Otherwise (future stage or empty cell), use default background
                           'bg-background'
                         )}
                       >
-                        {/* Only show icon/name if the stage is active in the pipeline AND simulation is not completed */}
-                        {currentStage && !simulationCompleted && (
+                        {/* Show icon/name if the stage should be active in this cycle column AND simulation is not completed */}
+                        {currentStageData && !isFinished && (
                            <div className="flex flex-col items-center justify-center">
-                             <currentStage.icon className="w-4 h-4 mb-1" aria-hidden="true" />
-                             <span className="text-xs">{currentStage.name}</span>
+                             <currentStageData.icon className="w-4 h-4 mb-1" aria-hidden="true" />
+                             <span className="text-xs">{currentStageData.name}</span>
                            </div>
                          )}
                       </TableCell>
