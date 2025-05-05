@@ -1,7 +1,8 @@
 import type { Metadata } from 'next';
 import { Geist, Geist_Mono } from 'next/font/google';
 import './globals.css';
-import { Toaster } from '@/components/ui/toaster'; // Import Toaster
+import { Toaster } from '@/components/ui/toaster';
+import { SimulationProvider } from '@/context/SimulationContext'; // Import the provider
 
 const geistSans = Geist({
   variable: '--font-geist-sans',
@@ -14,8 +15,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'MIPS Pipeline Viewer', // Updated title
-  description: 'Visualize MIPS instruction pipeline progression', // Updated description
+  title: 'MIPS Pipeline Viewer',
+  description: 'Visualize MIPS instruction pipeline progression',
 };
 
 export default function RootLayout({
@@ -26,8 +27,11 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
-        {children}
-        <Toaster /> {/* Add Toaster component */}
+        {/* Wrap the application with the SimulationProvider */}
+        <SimulationProvider>
+          {children}
+        </SimulationProvider>
+        <Toaster />
       </body>
     </html>
   );
