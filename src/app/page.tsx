@@ -41,25 +41,29 @@ export default function Home() {
   }
 
   useEffect(() => {
-    if (isRunning && currentCycle <= maxCycles) {
+    if (isRunning && currentCycle < maxCycles) { // Check currentCycle < maxCycles to stop interval before last cycle visualization update
       intervalRef.current = setInterval(() => {
         setCurrentCycle((prevCycle) => {
           const nextCycle = prevCycle + 1;
-          if (nextCycle > maxCycles) {
+          if (nextCycle >= maxCycles) { // Use >= to handle the last cycle correctly
             if (intervalRef.current) {
               clearInterval(intervalRef.current);
               intervalRef.current = null;
             }
             setIsRunning(false); // Stop running when max cycles reached
-            return prevCycle; // Stay at the last cycle
+             // Set cycle to maxCycles explicitly to ensure the last stage is highlighted
+             return maxCycles;
           }
           return nextCycle;
         });
       }, 1000); // Advance cycle every 1 second
     } else if (!isRunning && intervalRef.current) {
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+    } else if (currentCycle === maxCycles && isRunning) { // Explicitly set isRunning to false when the last cycle is reached
+        setIsRunning(false);
     }
+
 
     // Cleanup interval on component unmount or when isRunning changes to false
     return () => {
@@ -93,6 +97,7 @@ export default function Home() {
           instructions={instructions}
           cycle={currentCycle}
           maxCycles={maxCycles}
+          isRunning={isRunning} // Pass isRunning state
         />
       )}
     </div>

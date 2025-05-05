@@ -19,6 +19,7 @@ interface PipelineVisualizationProps {
   instructions: string[];
   cycle: number;
   maxCycles: number;
+  isRunning: boolean; // Add isRunning prop
 }
 
 const STAGES = [
@@ -31,7 +32,7 @@ const STAGES = [
 
 const STAGE_COUNT = STAGES.length;
 
-export function PipelineVisualization({ instructions, cycle, maxCycles }: PipelineVisualizationProps) {
+export function PipelineVisualization({ instructions, cycle, maxCycles, isRunning }: PipelineVisualizationProps) {
   if (instructions.length === 0 || maxCycles === 0) {
     return null; // Don't render if no instructions or cycles
   }
@@ -68,13 +69,16 @@ export function PipelineVisualization({ instructions, cycle, maxCycles }: Pipeli
                     const isInPipeline = stageIndex >= 0 && stageIndex < STAGE_COUNT;
                     const currentStage = isInPipeline ? STAGES[stageIndex] : null;
                     const isCurrentCycleStage = isInPipeline && c === cycle && stageIndex < STAGE_COUNT;
+                    // Only animate if the simulation is running
+                    const shouldAnimate = isCurrentCycleStage && isRunning;
 
                     return (
                       <TableCell
                         key={`inst-${instIndex}-cycle-${c}`}
                         className={cn(
-                          'text-center w-16 h-14 transition-colors duration-300', // Added transition
-                          isCurrentCycleStage ? 'bg-accent text-accent-foreground animate-pulse-bg' : // Highlight + Animation
+                          'text-center w-16 h-14 transition-colors duration-300',
+                          shouldAnimate ? 'bg-accent text-accent-foreground animate-pulse-bg' : // Animate only when running
+                          isCurrentCycleStage ? 'bg-accent text-accent-foreground' : // Highlight without animation when stopped
                           isInPipeline ? 'bg-secondary text-secondary-foreground' : 'bg-background' // Normal stages
                         )}
                       >
