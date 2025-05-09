@@ -4,7 +4,7 @@
 
 import type * as React from 'react';
 import { InstructionInput } from '@/components/instruction-input';
-import { PipelineVisualization } from '@/components/pipeline-visualization';
+import { PipelineVisualization } from '@/components/instruction-input';
 import { Separator } from '@/components/ui/separator';
 import { useSimulationState, useSimulationActions } from '@/context/SimulationContext'; // Import context hooks
 
