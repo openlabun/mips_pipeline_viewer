@@ -1,5 +1,3 @@
-// src/app/page.tsx
-
 "use client";
 
 import type * as React from 'react';
@@ -39,26 +37,42 @@ export default function Home() {
         <>
           <PipelineVisualization />
           {/* Display cycle info below the visualization */}
-           {/* Ensure maxCycles is valid before displaying */}
-           { maxCycles > 0 && (
-              <p className="text-center text-muted-foreground mt-4">
-                Cycle: {currentCycle} / {maxCycles} {isFinished ? '(Finished)' : isRunning ? '(Running)' : '(Paused)'}
-              </p>
-            )}
+          {/* Ensure maxCycles is valid before displaying */}
+          { maxCycles > 0 && (
+            <p className="text-center text-muted-foreground mt-4">
+              Cycle: {currentCycle} / {maxCycles} {isFinished ? '(Finished)' : isRunning ? '(Running)' : '(Paused)'}
+            </p>
+          )}
         </>
       )}
-       {/* Show message if reset/never run and no instructions */}
-       {!hasStarted && instructions.length === 0 && (
+
+      {/* Show message if reset/never run and no instructions */}
+      {!hasStarted && instructions.length === 0 && (
         <p className="text-center text-muted-foreground mt-4">
           Enter instructions and press Start Simulation.
         </p>
-       )}
-       {/* Show different message if reset after a run */}
-       {hasStarted && instructions.length === 0 && (
-         <p className="text-center text-muted-foreground mt-4">
-           Simulation reset. Enter new instructions to start again.
-         </p>
-       )}
+      )}
+      {/* Show different message if reset after a run */}
+      {hasStarted && instructions.length === 0 && (
+        <p className="text-center text-muted-foreground mt-4">
+          Simulation reset. Enter new instructions to start again.
+        </p>
+      )}
+
+      {/* Legend to explain the colors */}
+      <div className="mt-8 w-full text-center">
+        <h2 className="text-xl font-bold">Pipeline Legend</h2>
+        <div className="flex justify-center space-x-4 mt-4">
+          <div className="flex items-center space-x-2">
+            <div className="w-6 h-6 bg-yellow-200 border border-yellow-500 rounded-full"></div>
+            <span className="text-sm">Forwarding (FWD)</span>
+          </div>
+          <div className="flex items-center space-x-2">
+            <div className="w-6 h-6 bg-red-300 border border-gray-500 rounded-full"></div>
+            <span className="text-sm">Stall (STALL)</span>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

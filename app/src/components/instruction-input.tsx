@@ -7,6 +7,7 @@ import { Label } from '@/components/ui/label';
 import { Pause, Play, RotateCcw } from 'lucide-react';
 import { useSimulationActions, useSimulationState } from '@/context/SimulationContext';
 
+
 export let forwardingDetected = false;
 
 // ✅ Tipo de forwarding (puede ir en otro archivo si lo necesitas global)
@@ -19,8 +20,15 @@ export type ForwardingInfo = {
 let fwd = false;
 let fwdprev: number[] = [];  // Ahora TypeScript sabe que el array contendrá números
 let fwdpos: number[] = [];
+let haylw: boolean = false;
+let haylwprev: boolean = false;
+let stallprev: number[] = []
 
-
+export type StallInfo = {
+  fromIndex2: number;
+  toIndex2: number;
+  register2: string;
+};
 
 
 
@@ -80,7 +88,9 @@ export function InstructionInput({ onInstructionsSubmit, onReset, isRunning }: I
       case '001000': return `addi $${rt}, $${rs}, ${immediate}`;
       case '001100': return `andi $${rt}, $${rs}, ${immediate}`;
       case '001101': return `ori $${rt}, $${rs}, ${immediate}`;
-      case '100011': return `lw $${rt}, ${immediate}($${rs})`;
+      case '100011': 
+      haylw = true;
+      return `lw $${rt}, ${immediate}($${rs})`;
       case '101011': return `sw $${rt}, ${immediate}($${rs})`;
       case '000100': return `beq $${rs}, $${rt}, ${immediate}`;
       case '000101': return `bne $${rs}, $${rt}, ${immediate}`;
@@ -89,6 +99,8 @@ export function InstructionInput({ onInstructionsSubmit, onReset, isRunning }: I
       default: return `unknown opcode: ${opcode}`;
     }
   }
+
+
 
   const handleSubmit = () => {
     setError(null);
@@ -116,22 +128,61 @@ console.log('Decoded MIPS Instructions:', decoded);
 // ✅ Verificación de forwarding (dependencias RAW)
 // ✅ Verificación de forwarding (dependencias RAW)
 const extractRdRsRt = (instr: string) => {
-  const match = instr.match(/\$(\d+),\s*\$(\d+),\s*\$(\d+)/);
+  // Intentar coincidencia para instrucciones R-type (rd, rs, rt)
+  let match = instr.match(/^(\w+)\s+\$(\d+),\s*\$(\d+),\s*\$(\d+)/);
   if (match) {
-    const [, rd, rs, rt] = match.map(Number);
-    return { rd, rs, rt };
+    const [, opcode, rd, rs, rt] = match;
+    return { opcode, rd: Number(rd), rs: Number(rs), rt: Number(rt) };
   }
+
+  // Intentar coincidencia para instrucciones I-type (rt, offset(rs))
+  match = instr.match(/^(\w+)\s+\$(\d+),\s*(\d+)\(\$(\d+)\)/);
+  if (match) {
+    const [, opcode, rt, offset, rs] = match;
+    return { opcode, rt: Number(rt), rs: Number(rs), rd: null };
+  }
+
+  // Intentar coincidencia para instrucciones I-type (inmediato)
+  match = instr.match(/^(\w+)\s+\$(\d+),\s*\$(\d+),\s*(-?\d+)/);
+  if (match) {
+    const [, opcode, rt, rs, immediate] = match;
+    
+    return { opcode, rt: Number(rt), rs: Number(rs), rd: null, immediate: Number(immediate) };
+  }
+
+  // Intentar coincidencia para instrucciones J-type (address)
+  match = instr.match(/^(\w+)\s+(\d+)/);
+  if (match) {
+    const [, opcode, address] = match;
+    return { opcode, rd: null, rs: null, rt: null, address: Number(address) };
+  }
+
+  // Si no coincide, retornar null
   return null;
 };
 
+
+
 const forwardingList: ForwardingInfo[] = [];
+const StallList: StallInfo[] = [];
 
 for (let i = 1; i < decoded.length; i++) {
+
   const prev = extractRdRsRt(decoded[i - 1]);
   const curr = extractRdRsRt(decoded[i]);
+ 
 
   if (prev && curr) {
-    if (prev.rd && (prev.rd === curr.rs || prev.rd === curr.rt)) {
+    console.log(prev.rd)
+    console.log(curr.rs)
+    console.log(curr.rt)
+    if(prev.opcode == "lw"){
+      haylw = true;
+    }
+    console.log(haylw)
+
+    
+    if (prev.rd && (prev.rd === curr.rs || prev.rd === curr.rt) && haylw == false) {
       const register = `$${prev.rd}`;
       forwardingList.push({
         fromIndex: i - 1,
@@ -147,7 +198,27 @@ for (let i = 1; i < decoded.length; i++) {
       console.log(fwdprev,fwdpos)
       
     }
+
+
+  
+        if ((prev.rt === curr.rs || prev.rt === curr.rd) && haylw == true) {
+      const register2 = `$${prev.rt}`;
+      haylw = false;
+      StallList.push({
+        fromIndex2: i - 1,
+        toIndex2: i,
+        register2,
+      });
+
+      console.log(`⚠️ Stall needed between instruction ${i - 1} and ${i}: ${register2}`);
+      console.log(StallList);
+      stallprev.push(i-1)
+ 
+      
+    }
+
   }
+
 }
 
 
@@ -259,6 +330,9 @@ export function PipelineVisualization() {
     forwardingDetected = false;
     fwdprev = [];
     fwdpos = [];
+    haylw = false;
+    stallprev = [];
+    
   }
 }, [isFinished]);
 
@@ -335,37 +409,55 @@ export function PipelineVisualization() {
 
                     return (
                       
-                    <TableCell
-                      key={`inst-${instIndex}-cycle-${c}`}
-                      className={cn(
-                        'text-center w-16 h-14 transition-colors duration-300',
-                        isFinished
-                          ? 'bg-background'
-                          : (
-                              ((fwdprev.includes(instIndex) && currentStageData?.name === 'MEM') ||
-                              (fwdpos.includes(instIndex) && currentStageData?.name === 'ID'))
-                            )
-                          ? 'bg-yellow-200 text-black border border-yellow-500'
-                          : (
-                              ((fwdprev.includes(instIndex) || fwdpos.includes(instIndex)) && !isRunning)
-                            )
-                          ? 'bg-yellow-100 text-black border border-yellow-300'
-                          : shouldAnimate 
-                            ? 'bg-accent text-accent-foreground animate-pulse-bg' 
-                            : shouldHighlightStatically 
-                              ? 'bg-accent text-accent-foreground' 
-                              : isPastStage 
-                                ? 'bg-secondary text-secondary-foreground' 
-                                : 'bg-background'
-                      )}
-                    >
-                      {currentStageData && !isFinished && (
-                        <div className="flex flex-col items-center justify-center">
-                          <currentStageData.icon className="w-4 h-4 mb-1" aria-hidden="true" />
-                          <span className="text-xs">{currentStageData.name}</span>
-                        </div>
-                      )}
-                    </TableCell>
+                      <TableCell
+                        key={`inst-${instIndex}-cycle-${c}`}
+                        className={cn(
+                          'text-center w-16 h-14 transition-colors duration-300',
+                          isFinished
+                            ? 'bg-background'
+                            : (
+                                ((fwdprev.includes(instIndex) && currentStageData?.name === 'MEM') ||
+                                (fwdpos.includes(instIndex) && currentStageData?.name === 'ID'))
+                              )
+                            ? 'bg-yellow-200 text-black border border-yellow-500 animate-pulse-bg'  // Animación de Forwarding
+                            : (
+                                ((fwdprev.includes(instIndex) || fwdpos.includes(instIndex)) && !isRunning) && !stallprev.includes(instIndex)
+                              )
+                            ? 'bg-yellow-100 text-black border border-yellow-300 animate-pulse-bg'  // Forwarding sin stall
+                            : (
+                                stallprev.length > 0 && // Solo aplicar el estilo de stall si hay valores en stallprev
+                                ((stallprev.includes(instIndex) && currentStageData?.name === 'ID') || 
+                                (stallprev.includes(instIndex) && currentStageData?.name === 'MEM') || 
+                                (stallprev.includes(instIndex) && currentStageData?.name === 'EX') || 
+                                (stallprev.includes(instIndex) && currentStageData?.name === 'IF') || 
+                                (stallprev.includes(instIndex) && currentStageData?.name === 'WB'))
+                              )
+                            ? 'bg-red-300 text-gray-700 border border-gray-500 animate-pulse-bg stall-animation'  // Stall
+                            : shouldAnimate 
+                              ? 'bg-accent text-accent-foreground animate-pulse-bg' 
+                              : shouldHighlightStatically 
+                                ? 'bg-accent text-accent-foreground' 
+                                : isPastStage 
+                                  ? 'bg-secondary text-secondary-foreground' 
+                                  : 'bg-background',
+                          // Esta es la animación descendente azul de alta prioridad
+                          isRunning && 'animate-pulse-descend'  // La animación azul solo se activa cuando está en ejecución
+                        )}
+                      >
+                        {currentStageData && !isFinished && (
+                          <div className="flex flex-col items-center justify-center">
+                            <currentStageData.icon className="w-4 h-4 mb-1" aria-hidden="true" />
+                            <span className="text-xs">{currentStageData.name}</span>
+                          </div>
+                        )}
+                      </TableCell>
+
+
+
+
+                      
+
+
 
                     
 
