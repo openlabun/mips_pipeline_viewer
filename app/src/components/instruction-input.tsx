@@ -173,22 +173,27 @@ for (let i = 1; i < decoded.length; i++) {
   const prev = extractRdRsRt(decoded[i - 1]);
   const curr = extractRdRsRt(decoded[i]);
  
-
+  console.log(prev)
+  console.log(curr)
   if (prev && curr) {
     console.log(prev.rd)
     console.log(curr.rs)
     console.log(curr.rt)
     if(prev.opcode == "lw"){
+      console.log("ENTRO")
       haylw = true;
       haylwvec.push(haylw)
+    }else{
+      haylw= false;
     }
+    
     console.log(haylw)
     
     
     console.log(haylwvec)
 
     
-    if (prev.rd && (prev.rd === curr.rs || prev.rd === curr.rt) && haylw == false) {
+    if (prev.rd && (prev.rd === curr.rs || prev.rd === curr.rt) && haylw == false && prev.opcode !== "lw") {
       const register = `$${prev.rd}`;
       forwardingList.push({
         fromIndex: i - 1,
@@ -207,7 +212,7 @@ for (let i = 1; i < decoded.length; i++) {
 
 
   
-        if ((prev.rt === curr.rs || prev.rt === curr.rd) && haylw == true) {
+        if ((prev.rt === curr.rs || prev.rt === curr.rt) && haylw == true && curr.opcode !== "lw") {
       const register2 = `$${prev.rt}`;
       haylw = false;
       StallList.push({
