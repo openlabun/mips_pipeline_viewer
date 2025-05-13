@@ -2,6 +2,8 @@
 
 import type { PropsWithChildren } from 'react';
 import * as React from 'react';
+import { haylwvec } from '@/components/instruction-input';
+import { stallprev } from '@/components/instruction-input';
 
 
 
@@ -79,11 +81,49 @@ function hasRawDependency(prevInst: string, currInst: string): boolean {
 }
 
 // Lógica principal de actualización de estado
+// Lógica principal de actualización de estado
+
+
+
+let entryCounter = 0; // Contador de entradas
+
+
 const calculateNextState = (currentState: SimulationState): SimulationState => {
   
   if (!currentState.isRunning || currentState.isFinished) return currentState;
 
-  const nextCycle = currentState.currentCycle + 1;
+  let nextCycle = currentState.currentCycle;
+  console.log("Haylwvec:", haylwvec);
+
+  // Verificar la etapa actual del ciclo
+  const currentStage = STAGE_NAMES[(nextCycle - 1) % STAGE_NAMES.length]; 
+  
+
+  
+
+// Solo si estamos en ID y hay lwvec tiene true
+if (currentStage === "ID" && haylwvec.length > 0 && haylwvec[0] === true) {
+  entryCounter++;
+  console.log(`Stall Detected. Counter: ${entryCounter}`);
+
+  if (entryCounter === 2) {
+    haylwvec.shift(); // Elimina el primer elemento
+    console.log("Stall aplicado, nuevo haylwvec:", haylwvec);
+    entryCounter = 0;
+  } else {
+    nextCycle += 0; // Stall (no avanza el ciclo)
+  }
+} else {
+  nextCycle += 1; // Avanza normalmente
+}
+
+
+
+
+
+
+
+
   const newInstructionStages: Record<number, number | null> = {};
   let activeInstructions = 0;
 
@@ -93,23 +133,6 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
     if (stageIndex >= 0 && stageIndex < currentState.stageCount) {
       newInstructionStages[index] = stageIndex;
       activeInstructions++;
-
-      // Verifica si hay RAW con la instrucción anterior
-      if (index > 0 && stageIndex === 2) { // EX stage
-        const prevInst = currentState.instructions[index - 1];
-        const currInst = currentState.instructions[index];
-
-        const prevParsed = parseInstruction(prevInst);
-        const currParsed = parseInstruction(currInst);
-
-        const writtenReg = prevParsed.rd || prevParsed.rt;
-        const readRegs = [currParsed.rs, currParsed.rt].filter(Boolean);
-
-        if (writtenReg && readRegs.includes(writtenReg)) {
-          console.log(`[FORWARDING] De instr ${index - 1} a instr ${index} por ${writtenReg} en ciclo ${nextCycle} (de MEM/WB a EX)`);
-        }
-      }
-
     } else {
       newInstructionStages[index] = null;
     }
@@ -131,6 +154,18 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
     isFinished,
   };
 };
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 export function SimulationProvider({ children }: PropsWithChildren) {
@@ -216,6 +251,10 @@ export function SimulationProvider({ children }: PropsWithChildren) {
       runClock();
     } else {
       clearTimer();
+      
+      
+      
+      
     }
     return clearTimer;
   }, [simulationState.isRunning, simulationState.isFinished, runClock]);
@@ -256,3 +295,9 @@ export function useSimulationActions() {
   }
   return context;
 }
+
+
+
+
+
+

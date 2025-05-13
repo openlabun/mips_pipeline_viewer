@@ -21,8 +21,10 @@ let fwd = false;
 let fwdprev: number[] = [];  // Ahora TypeScript sabe que el array contendrá números
 let fwdpos: number[] = [];
 let haylw: boolean = false;
+let haylwvec: boolean[] = []
 let haylwprev: boolean = false;
 let stallprev: number[] = []
+let stallprev2: number[] = []
 
 export type StallInfo = {
   fromIndex2: number;
@@ -178,8 +180,12 @@ for (let i = 1; i < decoded.length; i++) {
     console.log(curr.rt)
     if(prev.opcode == "lw"){
       haylw = true;
+      haylwvec.push(haylw)
     }
     console.log(haylw)
+    
+    
+    console.log(haylwvec)
 
     
     if (prev.rd && (prev.rd === curr.rs || prev.rd === curr.rt) && haylw == false) {
@@ -212,7 +218,8 @@ for (let i = 1; i < decoded.length; i++) {
 
       console.log(`⚠️ Stall needed between instruction ${i - 1} and ${i}: ${register2}`);
       console.log(StallList);
-      stallprev.push(i-1)
+      stallprev.push(i)
+      stallprev2.push(i-1)
  
       
     }
@@ -220,6 +227,7 @@ for (let i = 1; i < decoded.length; i++) {
   }
 
 }
+
 
 
   
@@ -332,6 +340,9 @@ export function PipelineVisualization() {
     fwdpos = [];
     haylw = false;
     stallprev = [];
+    stallprev2 = [];
+    haylwvec = [];
+    
     
   }
 }, [isFinished]);
@@ -476,4 +487,7 @@ export function PipelineVisualization() {
   );
   
 }
+
+export { haylwvec };
+export { stallprev };
 
