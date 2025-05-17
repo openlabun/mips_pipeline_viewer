@@ -3,6 +3,8 @@
 
 import type { PropsWithChildren } from 'react';
 import * as React from 'react';
+import { decodeHexInstruction } from '@/utils/decodeInstruction';
+import type { decodedInstruction } from '@/utils/decodeInstruction';
 
 // Define the stage names (optional, but good for clarity)
 const STAGE_NAMES = ['IF', 'ID', 'EX', 'MEM', 'WB'] as const;
@@ -11,9 +13,16 @@ type StageName = typeof STAGE_NAMES[number];
 // This can be 'stall', 'forward', or null (not set)
 export type SimulationMode = 'default' | 'stall' | 'forward';
 
+/*
+const instruction = "014B4820";
+const decoded = decodeHexInstruction(instruction);
+console.log(decoded);
+*/ 
+
 // Define the shape of the context state
 interface SimulationState {
   instructions: string[];
+  decodedInstructions: decodedInstruction []; // Add decoded instructions
   currentCycle: number;
   maxCycles: number;
   isRunning: boolean;
@@ -40,6 +49,7 @@ const DEFAULT_STAGE_COUNT = STAGE_NAMES.length; // Use length of defined stages
 
 const initialState: SimulationState = {
   instructions: [],
+  decodedInstructions: [], // Initialize with empty array
   currentCycle: 0,
   maxCycles: 0,
   isRunning: false,
@@ -55,13 +65,19 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
     return currentState; // No changes if not running or already finished
   }
 
-  if(currentState.mode === 'stall') {
-    // Handle stall mode logic here
-   
-  } else if(currentState.mode === 'forward') {
-    // Handle forward mode logic here
+  switch (currentState.mode) {
+    case 'stall':
+      return calculateStallNextState(currentState);
+    case 'forward':
+      return calculateForwardNextState(currentState);
+    case 'default':
+    default:
+      return calculateDefaultNextState(currentState);
   }
-  
+ 
+};
+
+function calculateDefaultNextState(currentState: SimulationState): SimulationState {
   const nextCycle = currentState.currentCycle + 1;
   const newInstructionStages: Record<number, number | null> = {};
   let activeInstructions = 0;
@@ -95,7 +111,16 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
     isRunning: isRunning,
     isFinished: isFinished,
   };
-};
+}
+
+
+function calculateStallNextState(currentState: SimulationState): SimulationState {
+  return (currentState)
+}
+
+function calculateForwardNextState(currentState: SimulationState): SimulationState {
+  return (currentState)
+}
 
 
 // Create the provider component
@@ -141,6 +166,9 @@ export function SimulationProvider({ children }: PropsWithChildren) {
 
     const calculatedMaxCycles = submittedInstructions.length + DEFAULT_STAGE_COUNT - 1;
     const initialStages: Record<number, number | null> = {};
+
+    const decoded = submittedInstructions.map((instruction) => decodeHexInstruction(instruction));
+
     // Initialize stages for cycle 1
     submittedInstructions.forEach((_, index) => {
         const stageIndex = 1 - index - 1; // Calculate stage for cycle 1
@@ -154,6 +182,7 @@ export function SimulationProvider({ children }: PropsWithChildren) {
 
     setSimulationState({
       instructions: submittedInstructions,
+      decodedInstructions: decoded, // Set decoded instructions
       currentCycle: 1, // Start from cycle 1
       maxCycles: calculatedMaxCycles,
       isRunning: true,
