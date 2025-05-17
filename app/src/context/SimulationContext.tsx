@@ -7,6 +7,9 @@ import * as React from 'react';
 // Define the stage names (optional, but good for clarity)
 const STAGE_NAMES = ['IF', 'ID', 'EX', 'MEM', 'WB'] as const;
 type StageName = typeof STAGE_NAMES[number];
+// Define the shape of the simulation mode
+// This can be 'stall', 'forward', or null (not set)
+export type SimulationMode = 'default' | 'stall' | 'forward';
 
 // Define the shape of the context state
 interface SimulationState {
@@ -18,11 +21,12 @@ interface SimulationState {
   // Map instruction index to its current stage index (0-based) or null if not started/finished
   instructionStages: Record<number, number | null>;
   isFinished: boolean; // Track if simulation completed
+  mode: SimulationMode;
 }
 
 // Define the shape of the context actions
 interface SimulationActions {
-  startSimulation: (submittedInstructions: string[]) => void;
+  startSimulation: (submittedInstructions: string[], mode: SimulationMode) => void;
   resetSimulation: () => void;
   pauseSimulation: () => void;
   resumeSimulation: () => void;
@@ -42,6 +46,7 @@ const initialState: SimulationState = {
   stageCount: DEFAULT_STAGE_COUNT,
   instructionStages: {},
   isFinished: false,
+  mode: 'default'  // <-- NUEVA PROP
 };
 
 // Function to calculate the next state based on the current state
@@ -50,6 +55,13 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
     return currentState; // No changes if not running or already finished
   }
 
+  if(currentState.mode === 'stall') {
+    // Handle stall mode logic here
+   
+  } else if(currentState.mode === 'forward') {
+    // Handle forward mode logic here
+  }
+  
   const nextCycle = currentState.currentCycle + 1;
   const newInstructionStages: Record<number, number | null> = {};
   let activeInstructions = 0;
@@ -120,7 +132,7 @@ export function SimulationProvider({ children }: PropsWithChildren) {
     setSimulationState(initialState);
   }, []);
 
-  const startSimulation = React.useCallback((submittedInstructions: string[]) => {
+  const startSimulation = React.useCallback((submittedInstructions: string[], mode: SimulationMode) => {
     clearTimer(); // Clear previous timer just in case
     if (submittedInstructions.length === 0) {
       resetSimulation(); // Reset if no instructions submitted
@@ -148,6 +160,7 @@ export function SimulationProvider({ children }: PropsWithChildren) {
       stageCount: DEFAULT_STAGE_COUNT,
       instructionStages: initialStages, // Set initial stages for cycle 1
       isFinished: false,
+      mode,
     });
     // runClock will be triggered by the useEffect below when isRunning becomes true
   }, [resetSimulation]);
