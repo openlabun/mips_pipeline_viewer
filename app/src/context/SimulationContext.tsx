@@ -69,8 +69,8 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
     case 'stall':
       // console.log('Stall mode');
       return calculateStallNextState(currentState);
-   // case 'forward':
-     // return calculateForwardNextState(currentState);
+   case 'forward':
+      return calculateForwardNextState(currentState);
     case 'default':
     default:
       return calculateDefaultNextState(currentState);
@@ -161,7 +161,7 @@ function calculateStallNextState(currentState: SimulationState): SimulationState
       continue;
     }
 
-    // Si está en ID y hay dependencia, stall SOLO esa instrucción
+    // Si está en ID y hay dependencia, stall SOLO a esa instrucción
     if (
       prevStage === 1 && // ID
       hasRAWDependency(i)
@@ -186,6 +186,94 @@ function calculateStallNextState(currentState: SimulationState): SimulationState
   return {
     ...currentState,
     currentCycle: isFinished ? completionCycle : nextCycle,
+    instructionStages: newInstructionStages,
+    isRunning,
+    isFinished,
+  };
+}
+
+function calculateForwardNextState(currentState: SimulationState): SimulationState {
+  const nextCycle = currentState.currentCycle + 1;
+  const newInstructionStages: Record<number, number | null> = {};
+
+  function hasRAWDependencyWithForwarding(currIdx: number): boolean {
+    const currInstr = currentState.decodedInstructions[currIdx];
+    if (!currInstr) return false;
+    if (currentState.instructionStages[currIdx] !== 1) return false; // Solo nos interesa si está en ID
+
+    for (let prevIdx = 0; prevIdx < currIdx; prevIdx++) {
+      const prevInstr = currentState.decodedInstructions[prevIdx];
+      const prevStage = currentState.instructionStages[prevIdx];
+      if (prevStage === null) continue;
+
+      // Determina el registro destino de la instrucción previa
+      let prevDest: number | undefined = undefined;
+      let isLoad = false;
+      if (prevInstr.format === 'R') prevDest = prevInstr.rd;
+      if (prevInstr.format === 'I') {
+        prevDest = prevInstr.rt;
+        isLoad = prevInstr.opcode === 35; //lw opcode
+      }
+
+      //
+      const currSources = [currInstr.rs, currInstr.rt].filter(x => x !== undefined);
+
+      if (
+        prevDest !== undefined &&
+        currSources.includes(prevDest)
+      ) {
+        // if prevDest is load and prevStage is EX or MEM, stall
+        if (isLoad && [2, 3].includes(prevStage)) {
+          // if prevStage is EX, the data is not available yet so stall
+          console.log(
+            `Stall (forwarding): instr ${currIdx} (ID) depende de LOAD instr ${prevIdx} (stage ${prevStage})`
+          );
+          
+          return true;
+        }
+        // if prevStage is EX, the data is available after EX 
+        if (!isLoad && prevStage === 2) {
+          console.log(
+            `Stall (forwarding): instr ${currIdx} (ID) depende de ALU instr ${prevIdx} (stage ${prevStage})`
+          );
+          
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  for (let i = 0; i < currentState.instructions.length; i++) {
+    const prevStage = currentState.instructionStages[i];
+    if (prevStage === null) {
+      const stageIndex = nextCycle - i - 1;
+      newInstructionStages[i] = stageIndex >= 0 && stageIndex < currentState.stageCount ? stageIndex : null;
+      continue;
+    }
+
+    // if is in ID and has a RAW dependency, stall only that instruction
+    if (
+      prevStage === 1 && // ID
+      hasRAWDependencyWithForwarding(i)
+    ) {
+      console.log(`Stall insertado (forwarding) en ciclo ${nextCycle} para instrucción ${i}`);
+      newInstructionStages[i] = 1; // Stall in ID
+      newInstructionStages[i] = 1; // Stall in ID
+    } else if (prevStage !== null && prevStage < currentState.stageCount - 1) {
+      newInstructionStages[i] = prevStage + 1;
+    } else {
+      newInstructionStages[i] = null;
+    }
+  }
+
+  const allInstructionsFinished = Object.values(newInstructionStages).every(stage => stage === null);
+  const isFinished = allInstructionsFinished;
+  const isRunning = !isFinished;
+  console.log(`Ciclo ${nextCycle} (forwarding):`, newInstructionStages);
+  return {
+    ...currentState,
+    currentCycle: isFinished ? currentState.currentCycle : nextCycle,
     instructionStages: newInstructionStages,
     isRunning,
     isFinished,
