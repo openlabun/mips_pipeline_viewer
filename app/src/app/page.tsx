@@ -7,14 +7,21 @@ import { InstructionInput } from '@/components/instruction-input';
 import { PipelineVisualization } from '@/components/pipeline-visualization';
 import { Separator } from '@/components/ui/separator';
 import { useSimulationState, useSimulationActions } from '@/context/SimulationContext'; // Import context hooks
+import { SimulationMode } from '@/context/SimulationContext'; // Import SimulationMode type
+import { useState } from 'react';
 
 export default function Home() {
   // Get state and actions from context
   const { instructions, isRunning, currentCycle, maxCycles, isFinished } = useSimulationState();
   const { startSimulation, resetSimulation } = useSimulationActions();
+  const [mode, setMode] = useState<SimulationMode>('default');
 
   // Simulation has started if cycle > 0
   const hasStarted = currentCycle > 0;
+
+  const handleInstructionsSubmit = (submittedInstructions: string[]) => {
+  startSimulation(submittedInstructions, mode);
+};
 
   return (
     <div className="container mx-auto p-4 md:p-8 flex flex-col items-center space-y-8">
@@ -25,9 +32,26 @@ export default function Home() {
         </p>
       </header>
 
+        <div className="flex flex-col items-center space-y-2">
+          <label htmlFor="mode" className="text-sm font-medium text-muted-foreground">
+            Select Simulation Mode:
+          </label>
+        <select
+          id="mode"
+          value={mode}
+          onChange={(e) => setMode(e.target.value as SimulationMode)}
+          className="border border-gray-300 rounded px-2 py-1"
+        > 
+          <option value="default">Default</option>
+          <option value="stall">Stall</option>
+          <option value="forward">Forwarding</option>
+        </select>
+      </div>
+
+
       {/* Pass context actions/state down */}
       <InstructionInput
-        onInstructionsSubmit={startSimulation}
+        onInstructionsSubmit={handleInstructionsSubmit}
         onReset={resetSimulation}
         isRunning={isRunning} // isRunning is needed for button state/icons
       />
