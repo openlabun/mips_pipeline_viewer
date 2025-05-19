@@ -182,15 +182,12 @@ for (let i = 1; i < decoded.length; i++) {
     if(prev.opcode == "lw"){
       console.log("ENTRO")
       haylw = true;
-      haylwvec.push(haylw)
+      
     }else{
       haylw= false;
     }
     
-    console.log(haylw)
-    
-    
-    console.log(haylwvec)
+
 
     
     if (prev.rd && (prev.rd === curr.rs || prev.rd === curr.rt) && haylw == false && prev.opcode !== "lw") {
@@ -214,12 +211,14 @@ for (let i = 1; i < decoded.length; i++) {
   
         if ((prev.rt === curr.rs || prev.rt === curr.rt) && haylw == true && curr.opcode !== "lw") {
       const register2 = `$${prev.rt}`;
+      haylwvec.push(haylw)
       haylw = false;
       StallList.push({
         fromIndex2: i - 1,
         toIndex2: i,
         register2,
       });
+      console.log(StallList)
 
       console.log(`⚠️ Stall needed between instruction ${i - 1} and ${i}: ${register2}`);
       console.log(StallList);
