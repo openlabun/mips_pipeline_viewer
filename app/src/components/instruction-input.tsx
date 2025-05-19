@@ -426,47 +426,51 @@ export function PipelineVisualization() {
                     return (
                       
                       <TableCell
-                        key={`inst-${instIndex}-cycle-${c}`}
-                        className={cn(
-                          'text-center w-16 h-14 transition-colors duration-300',
-                          isFinished
-                            ? 'bg-background'
-                            : (
-                                ((fwdprev.includes(instIndex) && currentStageData?.name === 'MEM') ||
-                                (fwdpos.includes(instIndex) && currentStageData?.name === 'ID'))
-                              )
-                            ? 'bg-yellow-200 text-black border border-yellow-500 animate-pulse-bg'  // Animación de Forwarding
-                            : (
-                                ((fwdprev.includes(instIndex) || fwdpos.includes(instIndex)) && !isRunning) && !stallprev.includes(instIndex)
-                              )
-                            ? 'bg-yellow-100 text-black border border-yellow-300 animate-pulse-bg'  // Forwarding sin stall
-                            : (
-                                stallprev.length > 0 && // Solo aplicar el estilo de stall si hay valores en stallprev
-                                ((stallprev.includes(instIndex) && currentStageData?.name === 'ID') || 
-                                (stallprev.includes(instIndex) && currentStageData?.name === 'MEM') || 
-                                (stallprev.includes(instIndex) && currentStageData?.name === 'EX') || 
-                                (stallprev.includes(instIndex) && currentStageData?.name === 'IF') || 
-                                (stallprev.includes(instIndex) && currentStageData?.name === 'WB'))
-                              )
-                            ? 'bg-red-300 text-gray-700 border border-gray-500 animate-pulse-bg stall-animation'  // Stall
-                            : shouldAnimate 
-                              ? 'bg-accent text-accent-foreground animate-pulse-bg' 
-                              : shouldHighlightStatically 
-                                ? 'bg-accent text-accent-foreground' 
-                                : isPastStage 
-                                  ? 'bg-secondary text-secondary-foreground' 
-                                  : 'bg-background',
-                          // Esta es la animación descendente azul de alta prioridad
-                          isRunning && 'animate-pulse-descend'  // La animación azul solo se activa cuando está en ejecución
-                        )}
-                      >
-                        {currentStageData && !isFinished && (
-                          <div className="flex flex-col items-center justify-center">
-                            <currentStageData.icon className="w-4 h-4 mb-1" aria-hidden="true" />
-                            <span className="text-xs">{currentStageData.name}</span>
-                          </div>
-                        )}
-                      </TableCell>
+  key={`inst-${instIndex}-cycle-${c}`}
+  className={cn(
+    'text-center w-16 h-14 transition-colors duration-300',
+
+    // 💙 Prioridad: animación azul descendente
+    isRunning && shouldAnimate
+      ? 'bg-accent text-accent-foreground animate-pulse-bg animate-pulse-descend'
+
+    // ✅ Completado
+    : isFinished
+      ? 'bg-background'
+
+    // 🟡 Forwarding activo
+    : ((fwdprev.includes(instIndex) && currentStageData?.name === 'MEM') ||
+       (fwdpos.includes(instIndex) && currentStageData?.name === 'ID'))
+      ? 'bg-yellow-200 text-black border border-yellow-500 animate-pulse-bg'
+
+    // 🟡 Forwarding pasivo (sin stall)
+    : ((fwdprev.includes(instIndex) || fwdpos.includes(instIndex)) && !isRunning && !stallprev.includes(instIndex))
+      ? 'bg-yellow-100 text-black border border-yellow-300 animate-pulse-bg'
+
+    // 🔴 Stall
+    : (stallprev.length > 0 &&
+        (['ID', 'MEM', 'EX', 'IF', 'WB'].includes(currentStageData?.name || '') &&
+         stallprev.includes(instIndex)))
+      ? 'bg-red-300 text-gray-700 border border-gray-500 animate-pulse-bg stall-animation'
+
+    // Otros casos
+    : shouldAnimate 
+      ? 'bg-accent text-accent-foreground animate-pulse-bg' 
+    : shouldHighlightStatically 
+      ? 'bg-accent text-accent-foreground' 
+    : isPastStage 
+      ? 'bg-secondary text-secondary-foreground' 
+    : 'bg-background'
+  )}
+>
+  {currentStageData && !isFinished && (
+    <div className="flex flex-col items-center justify-center">
+      <currentStageData.icon className="w-4 h-4 mb-1" aria-hidden="true" />
+      <span className="text-xs">{currentStageData.name}</span>
+    </div>
+  )}
+</TableCell>
+
 
 
 
