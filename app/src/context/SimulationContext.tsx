@@ -4,6 +4,7 @@ import type { PropsWithChildren } from 'react';
 import * as React from 'react';
 import { haylwvec } from '@/components/instruction-input';
 import { stallprev } from '@/components/instruction-input';
+import { cuantosstall } from '@/components/instruction-input';
 
 
 
@@ -93,6 +94,7 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
   if (!currentState.isRunning || currentState.isFinished) return currentState;
 
   let nextCycle = currentState.currentCycle;
+  let nextCycle2 = currentState.currentCycle;
   console.log("Haylwvec:", haylwvec);
 
   // Verificar la etapa actual del ciclo
@@ -106,16 +108,20 @@ if (currentStage === "ID" && haylwvec.length > 0 && haylwvec[0] === true) {
   entryCounter++;
   console.log(`Stall Detected. Counter: ${entryCounter}`);
 
-  if (entryCounter === 2) {
+  if (entryCounter === 4) {
     haylwvec.shift(); // Elimina el primer elemento
     console.log("Stall aplicado, nuevo haylwvec:", haylwvec);
     entryCounter = 0;
   } else {
     nextCycle += 0; // Stall (no avanza el ciclo)
+    
+    
   }
 } else {
   nextCycle += 1; // Avanza normalmente
+  
 }
+
 
 
 

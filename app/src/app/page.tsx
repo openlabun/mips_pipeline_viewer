@@ -5,6 +5,7 @@ import { InstructionInput } from '@/components/instruction-input';
 import { PipelineVisualization } from '@/components/instruction-input';
 import { Separator } from '@/components/ui/separator';
 import { useSimulationState, useSimulationActions } from '@/context/SimulationContext'; // Import context hooks
+import { cuantosstall } from '@/components/instruction-input';
 
 export default function Home() {
   // Get state and actions from context
@@ -40,7 +41,9 @@ export default function Home() {
           {/* Ensure maxCycles is valid before displaying */}
           { maxCycles > 0 && (
             <p className="text-center text-muted-foreground mt-4">
-              Cycle: {currentCycle} / {maxCycles} {isFinished ? '(Finished)' : isRunning ? '(Running)' : '(Paused)'}
+              
+              Estado de simulación: {isFinished ? 'Finished' : isRunning ? 'Running' : 'Paused'}
+              
             </p>
           )}
         </>

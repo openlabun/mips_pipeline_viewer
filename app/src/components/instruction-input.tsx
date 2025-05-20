@@ -25,6 +25,8 @@ let haylwvec: boolean[] = []
 let haylwprev: boolean = false;
 let stallprev: number[] = []
 let stallprev2: number[] = []
+let stallif: boolean[] = []
+let cuantosstall: number;
 
 export type StallInfo = {
   fromIndex2: number;
@@ -224,6 +226,8 @@ for (let i = 1; i < decoded.length; i++) {
       console.log(StallList);
       stallprev.push(i)
       stallprev2.push(i-1)
+      cuantosstall =+ 1;
+      console.log(cuantosstall)
  
       
     }
@@ -321,6 +325,16 @@ const STAGES = [
   { name: 'WB', icon: CheckSquare },
 ] as const;
 
+const STAGES2 = [
+  { name: 'IF', icon: Download },
+  
+  { name: 'ID', icon: Code2 },
+  { name: 'EX', icon: Cpu },
+  { name: 'MEM', icon: MemoryStick },
+  { name: 'WB', icon: CheckSquare },
+] as const;
+
+
 
 
 
@@ -407,14 +421,27 @@ export function PipelineVisualization() {
                     
                   </TableCell>
                   {cycleNumbers.map((c) => {
-                    const expectedStageIndex = c - instIndex - 1;
-                    const currentStageIndex = instructionStages[instIndex];
-                    const isInPipelineAtThisCycle = expectedStageIndex >= 0 && expectedStageIndex < STAGES.length;
-                    const currentStageData = isInPipelineAtThisCycle ? STAGES[expectedStageIndex] : null;
-                    const isActualCurrentStage = currentStageIndex !== null && expectedStageIndex === currentStageIndex && c === cycle;
-                    const shouldAnimate = isActualCurrentStage && isRunning && !isFinished;
-                    const shouldHighlightStatically = isActualCurrentStage && !isRunning && !isFinished;
-                    const isPastStage = isInPipelineAtThisCycle && c < cycle;
+                      const hasStall = stallprev.includes(instIndex);
+
+  // Índice esperado de etapa en el pipeline
+  let expectedStageIndex = c - instIndex - 1;
+
+  // Ajusta índice para instrucciones con stall (pipeline extendido)
+  if (hasStall) {
+    if (expectedStageIndex >= 1) {
+      expectedStageIndex -= 1;
+    }
+  }
+                        const stagesToUse = hasStall ? STAGES2 : STAGES;
+                        const isInPipelineAtThisCycle = expectedStageIndex >= 0 && expectedStageIndex < stagesToUse.length;
+                        const currentStageData = isInPipelineAtThisCycle ? stagesToUse[expectedStageIndex] : null;
+
+                        // Determina si la instrucción está en la etapa actual
+                        const currentStageIndex = instructionStages[instIndex];
+                        const isActualCurrentStage = currentStageIndex !== null && expectedStageIndex === currentStageIndex && c === cycle;
+                        const shouldAnimate = isActualCurrentStage && isRunning && !isFinished;
+                        const shouldHighlightStatically = isActualCurrentStage && !isRunning && !isFinished;
+                        const isPastStage = isInPipelineAtThisCycle && c < cycle;
 
                     // Detect forwarding in ID and MEM stages
                     
@@ -498,4 +525,5 @@ export function PipelineVisualization() {
 
 export { haylwvec };
 export { stallprev };
+export { cuantosstall };
 
