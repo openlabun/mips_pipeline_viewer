@@ -14,7 +14,47 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Download, Code2, Cpu, MemoryStick, CheckSquare } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useSimulationState } from "@/context/SimulationContext"; // Import context hook
+import { useSimulationState } from "@/context/SimulationContext";
+
+/* ---------- Utilidad para detectar RAW hazard ---------- */
+function hasDataHazard(prevHex: string, currHex: string): boolean {
+  const decode = (hex: string) => {
+    const instr = parseInt(hex, 16);
+    const op = (instr >>> 26) & 0x3f;
+
+    if (op === 0x00) {
+      return {
+        type: "R" as const,
+        rs: (instr >>> 21) & 0x1f,
+        rt: (instr >>> 16) & 0x1f,
+        rd: (instr >>> 11) & 0x1f,
+      };
+    }
+    return {
+      type: "I" as const,
+      op,
+      rs: (instr >>> 21) & 0x1f,
+      rt: (instr >>> 16) & 0x1f,
+    };
+  };
+
+  const p = decode(prevHex);
+  const c = decode(currHex);
+
+  let prevDst: number | null = null;
+  if (p.type === "R") prevDst = p.rd;
+  else if (p.op === 0x23) prevDst = p.rt; // lw
+  else if (p.op !== 0x2b) prevDst = p.rt; // I-tipo salvo sw
+
+  const currSrc: number[] = [];
+  if (c.type === "R") currSrc.push(c.rs, c.rt);
+  else if (c.op === 0x23) currSrc.push(c.rs); // lw
+  else if (c.op === 0x2b) currSrc.push(c.rs, c.rt); // sw
+  else currSrc.push(c.rs);
+
+  return prevDst !== null && currSrc.includes(prevDst);
+}
+/* ---------------------------------------------------------------- */
 
 const STAGES = [
   { name: "IF", icon: Download },
@@ -25,7 +65,6 @@ const STAGES = [
 ] as const;
 
 export function PipelineVisualization() {
-  // Get state from context
   const {
     instructions,
     currentCycle: cycle,
@@ -33,31 +72,28 @@ export function PipelineVisualization() {
     isRunning,
     instructionStages,
     isFinished,
-    mode, // <-- Asegúrate de traer el modo
+    mode,
   } = useSimulationState();
 
-  const totalCyclesToDisplay = maxCycles > 0 ? maxCycles : 0;
-  const cycleNumbers = Array.from(
-    { length: totalCyclesToDisplay },
-    (_, i) => i + 1
-  );
+  const totalCycles = Math.max(maxCycles, 0);
+  const cycleNums = Array.from({ length: totalCycles }, (_, i) => i + 1);
 
-  const stalls = instructions.map((_, instIndex) => {
-    const currentStageIndex = instructionStages[instIndex];
-    const prevStageIndex = instructionStages[instIndex - 1];
+  /* ------------ detectar stalls reales ------------- */
+  const stalls = instructions.map((_, i) => {
+    if (
+      mode !== "stall" ||
+      i === 0 ||
+      !isRunning ||
+      isFinished ||
+      instructionStages[i] !== 1 || // curr en ID
+      instructionStages[i - 1] !== 2 // prev en EX
+    )
+      return null;
 
-    // Solo detectar stall si el modo es "stall"
-    const isStalled =
-      mode === "stall" &&
-      currentStageIndex === 1 &&
-      prevStageIndex === 2 &&
-      !isFinished &&
-      isRunning;
-
-    return isStalled ? instIndex : null;
+    return hasDataHazard(instructions[i - 1], instructions[i]) ? i : null;
   });
-
-  const isStallDetected = stalls.some((stall) => stall !== null);
+  const stallDetected = stalls.some((s) => s !== null);
+  /* -------------------------------------------------- */
 
   return (
     <Card className="w-full overflow-hidden">
@@ -66,89 +102,80 @@ export function PipelineVisualization() {
       </CardHeader>
       <CardContent>
         <div className="overflow-x-auto">
-          {/* Show stall message if detected */}
-          {isStallDetected && (
+          {stallDetected && (
             <div className="mb-4 p-4 bg-yellow-200 text-yellow-900 font-bold rounded">
               Stall detected in cycle {cycle}! Pipeline execution delayed.
             </div>
           )}
+
           <Table className="min-w-max">
             <TableCaption>MIPS instruction pipeline visualization</TableCaption>
+
             <TableHeader>
               <TableRow>
                 <TableHead className="w-[150px] sticky left-0 bg-card z-10 border-r">
                   Instruction
                 </TableHead>
-                {cycleNumbers.map((c) => (
+                {cycleNums.map((c) => (
                   <TableHead key={`cycle-${c}`} className="text-center w-16">
                     {c}
                   </TableHead>
                 ))}
               </TableRow>
             </TableHeader>
+
             <TableBody>
-              {instructions.map((inst, instIndex) => (
-                <TableRow key={`inst-${instIndex}`}>
+              {instructions.map((inst, i) => (
+                <TableRow key={`inst-${i}`}>
+                  {/* instrucción */}
                   <TableCell className="font-mono sticky left-0 bg-card z-10 border-r">
                     {inst}
                   </TableCell>
-                  {cycleNumbers.map((c) => {
-                    const expectedStageIndex = c - instIndex - 1;
-                    const currentStageIndex = instructionStages[instIndex];
 
-                    const isInPipelineAtThisCycle =
-                      expectedStageIndex >= 0 &&
-                      expectedStageIndex < STAGES.length;
-                    const currentStageData = isInPipelineAtThisCycle
-                      ? STAGES[expectedStageIndex]
-                      : null;
+                  {cycleNums.map((c) => {
+                    const expected = c - i - 1;
+                    const currStage = instructionStages[i];
 
-                    const isActualCurrentStage =
-                      currentStageIndex !== null &&
-                      expectedStageIndex === currentStageIndex &&
+                    const inPipe = expected >= 0 && expected < STAGES.length;
+                    const stageData = inPipe ? STAGES[expected] : null;
+
+                    const isCurr =
+                      currStage !== null &&
+                      expected === currStage &&
                       c === cycle;
 
-                    const isStalled =
-                      stalls.includes(instIndex) &&
-                      currentStageIndex === 1 &&
-                      c >= cycle;
+                    const stalled =
+                      stalls.includes(i) && currStage === 1 && c >= cycle;
 
-                    const shouldAnimate =
-                      isActualCurrentStage && isRunning && !isFinished;
-                    const shouldHighlightStatically =
-                      isActualCurrentStage && !isRunning && !isFinished;
-                    const isPastStage = isInPipelineAtThisCycle && c < cycle;
+                    const animate = isCurr && isRunning && !isFinished;
+                    const highlight = isCurr && !isRunning && !isFinished;
+                    const past = inPipe && c < cycle;
 
                     return (
                       <TableCell
-                        key={`inst-${instIndex}-cycle-${c}`}
+                        key={`cell-${i}-${c}`}
                         className={cn(
                           "text-center w-16 h-14 transition-colors duration-300",
                           isFinished
                             ? "bg-background"
-                            : isStalled
+                            : stalled
                             ? "bg-yellow-200 text-yellow-900 font-bold"
-                            : shouldAnimate
+                            : animate
                             ? "bg-blue-500 text-white animate-pulse"
-                            : shouldHighlightStatically
+                            : highlight
                             ? "bg-blue-500 text-white"
-                            : isPastStage
+                            : past
                             ? "bg-secondary text-secondary-foreground"
                             : "bg-background"
                         )}
                       >
-                        {currentStageData && !isFinished && (
-                          <div className="flex flex-col items-center justify-center">
-                            <currentStageData.icon
-                              className="w-4 h-4 mb-1"
-                              aria-hidden="true"
-                            />
-                            <span className="text-xs">
-                              {currentStageData.name}
-                            </span>
+                        {stageData && !isFinished && (
+                          <div className="flex flex-col items-center">
+                            <stageData.icon className="w-4 h-4 mb-1" />
+                            <span className="text-xs">{stageData.name}</span>
                           </div>
                         )}
-                        {isStalled && <span className="text-xs">STALL</span>}
+                        {stalled && <span className="text-xs">STALL</span>}
                       </TableCell>
                     );
                   })}
