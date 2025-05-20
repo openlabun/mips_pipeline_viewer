@@ -213,7 +213,7 @@ export function SimulationProvider({ children }: PropsWithChildren) {
         return;
       }
 
-      const calculatedMaxCycles = submittedInstructions.length + DEFAULT_STAGE_COUNT - 1;
+      const calculatedMaxCycles = submittedInstructions.length + DEFAULT_STAGE_COUNT;
       const initialStages: Record<number, number | null> = {};
       submittedInstructions.forEach((_, index) => {
         const stageIndex = 1 - index - 1;
