@@ -1,26 +1,35 @@
-// src/context/SimulationContext.tsx
-"use client"; // Add 'use client' directive
+"use client";
 
 import type { PropsWithChildren } from 'react';
 import * as React from 'react';
+import { haylwvec } from '@/components/instruction-input';
+import { stallprev } from '@/components/instruction-input';
+import { cuantosstall } from '@/components/instruction-input';
 
-// Define the stage names (optional, but good for clarity)
+
+
+
 const STAGE_NAMES = ['IF', 'ID', 'EX', 'MEM', 'WB'] as const;
 type StageName = typeof STAGE_NAMES[number];
+// ✅ Tipo de forwarding (puede ir en otro archivo si lo necesitas global)
+type ForwardingInfo = {
+  fromIndex: number;
+  toIndex: number;
+  register: string;
+};
 
-// Define the shape of the context state
+
+
 interface SimulationState {
   instructions: string[];
   currentCycle: number;
   maxCycles: number;
   isRunning: boolean;
   stageCount: number;
-  // Map instruction index to its current stage index (0-based) or null if not started/finished
   instructionStages: Record<number, number | null>;
-  isFinished: boolean; // Track if simulation completed
+  isFinished: boolean;
 }
 
-// Define the shape of the context actions
 interface SimulationActions {
   startSimulation: (submittedInstructions: string[]) => void;
   resetSimulation: () => void;
@@ -28,11 +37,10 @@ interface SimulationActions {
   resumeSimulation: () => void;
 }
 
-// Create the contexts
 const SimulationStateContext = React.createContext<SimulationState | undefined>(undefined);
 const SimulationActionsContext = React.createContext<SimulationActions | undefined>(undefined);
 
-const DEFAULT_STAGE_COUNT = STAGE_NAMES.length; // Use length of defined stages
+const DEFAULT_STAGE_COUNT = STAGE_NAMES.length;
 
 const initialState: SimulationState = {
   instructions: [],
@@ -44,49 +52,168 @@ const initialState: SimulationState = {
   isFinished: false,
 };
 
-// Function to calculate the next state based on the current state
-const calculateNextState = (currentState: SimulationState): SimulationState => {
-  if (!currentState.isRunning || currentState.isFinished) {
-    return currentState; // No changes if not running or already finished
-  }
+// Función auxiliar para parsear instrucciones MIPS
+function parseInstruction(inst: string): { rd?: string; rs?: string; rt?: string; imm?: string; label?: string } {
+  const [op, rest] = inst.trim().split(/\s+/, 2);
+  const args = rest ? rest.split(',').map(a => a.trim()) : [];
 
-  const nextCycle = currentState.currentCycle + 1;
+  switch (op) {
+    // Tipo R (rd, rs, rt)
+    case 'add':
+    case 'addu':
+    case 'sub':
+    case 'subu':
+    case 'and':
+    case 'or':
+    case 'slt':
+    case 'sltu':
+      return { rd: args[0], rs: args[1], rt: args[2] };
+
+    // Tipo I (rt, rs, inmediato)
+    case 'addi':
+    case 'addiu':
+    case 'andi':
+    case 'ori':
+    case 'slti':
+    case 'sltiu':
+      return { rt: args[0], rs: args[1], imm: args[2] };
+
+    // Carga y almacenamiento
+    case 'lw':
+    case 'sw':
+    case 'lb':
+    case 'sb': {
+      const match = args[1].match(/\((\$[a-z0-9]+)\)/i);
+      return { rt: args[0], rs: match?.[1] };
+    }
+
+    // Saltos condicionales
+    case 'beq':
+    case 'bne':
+      return { rs: args[0], rt: args[1], label: args[2] };
+
+    // Instrucciones shift (rd, rt, shamt)
+    case 'sll':
+    case 'srl':
+      return { rd: args[0], rt: args[1], imm: args[2] };
+
+    // Jumps
+    case 'j':
+    case 'jal':
+      return { label: args[0] };
+
+    // Jump register
+    case 'jr':
+      return { rs: args[0] };
+
+    default:
+      return {};
+  }
+}
+
+
+// Detecta dependencia RAW, usada solo para fines de demostración si se quisiera stalling
+function hasRawDependency(prevInst: string, currInst: string): boolean {
+  const prev = parseInstruction(prevInst);
+  const curr = parseInstruction(currInst);
+  const writtenReg = prev.rd || prev.rt;
+  const readRegs = [curr.rs, curr.rt].filter(Boolean);
+  return readRegs.includes(writtenReg);
+}
+
+// Lógica principal de actualización de estado
+// Lógica principal de actualización de estado
+
+
+
+let entryCounter = 0; // Contador de entradas
+
+
+const calculateNextState = (currentState: SimulationState): SimulationState => {
+  
+  if (!currentState.isRunning || currentState.isFinished) return currentState;
+
+  let nextCycle = currentState.currentCycle;
+  let nextCycle2 = currentState.currentCycle;
+  console.log("Haylwvec:", haylwvec);
+
+  // Verificar la etapa actual del ciclo
+  const currentStage = STAGE_NAMES[(nextCycle - 1) % STAGE_NAMES.length]; 
+  
+
+  
+
+// Solo si estamos en ID y hay lwvec tiene true
+if (currentStage === "ID" && haylwvec.length > 0 && haylwvec[0] === true) {
+  entryCounter++;
+  console.log(`Stall Detected. Counter: ${entryCounter}`);
+
+  if (entryCounter === 4) {
+    haylwvec.shift(); // Elimina el primer elemento
+    console.log("Stall aplicado, nuevo haylwvec:", haylwvec);
+    entryCounter = 0;
+  } else {
+    nextCycle += 0; // Stall (no avanza el ciclo)
+    
+    
+  }
+} else {
+  nextCycle += 1; // Avanza normalmente
+  
+}
+
+
+
+
+
+
+
+
+
   const newInstructionStages: Record<number, number | null> = {};
   let activeInstructions = 0;
 
-  currentState.instructions.forEach((_, index) => {
-    // Calculate the stage index for the instruction in the next cycle
-    // Instruction `index` enters stage `s` (0-based) at cycle `index + s + 1`
-    // So, in cycle `c`, the stage is `c - index - 1`
-    const stageIndex = nextCycle - index - 1;
+  currentState.instructions.forEach((inst, index) => {
+    let stageIndex = nextCycle - index - 1;
 
     if (stageIndex >= 0 && stageIndex < currentState.stageCount) {
       newInstructionStages[index] = stageIndex;
-      activeInstructions++; // Count instructions currently in the pipeline
+      activeInstructions++;
     } else {
-      newInstructionStages[index] = null; // Not in pipeline (either hasn't started or has finished)
+      newInstructionStages[index] = null;
     }
   });
 
-  // The simulation completes *after* the last instruction finishes the last stage
-  const completionCycle = currentState.instructions.length > 0
-    ? currentState.instructions.length + currentState.stageCount - 1
-    : 0;
+  const completionCycle =
+    currentState.instructions.length > 0
+      ? currentState.instructions.length + currentState.stageCount - 1
+      : 0;
 
   const isFinished = nextCycle > completionCycle;
-  const isRunning = !isFinished; // Stop running when finished
+  const isRunning = !isFinished;
 
   return {
     ...currentState,
-    currentCycle: isFinished ? completionCycle : nextCycle, // Cap cycle at completion
+    currentCycle: isFinished ? completionCycle : nextCycle,
     instructionStages: newInstructionStages,
-    isRunning: isRunning,
-    isFinished: isFinished,
+    isRunning,
+    isFinished,
   };
 };
 
 
-// Create the provider component
+
+
+
+
+
+
+
+
+
+
+
+
 export function SimulationProvider({ children }: PropsWithChildren) {
   const [simulationState, setSimulationState] = React.useState<SimulationState>(initialState);
   const intervalRef = React.useRef<NodeJS.Timeout | null>(null);
@@ -99,94 +226,85 @@ export function SimulationProvider({ children }: PropsWithChildren) {
   };
 
   const runClock = React.useCallback(() => {
-    clearTimer(); // Clear any existing timer
-    if (!simulationState.isRunning || simulationState.isFinished) return; // Don't start timer if not running or finished
+    clearTimer();
+    if (!simulationState.isRunning || simulationState.isFinished) return;
 
     intervalRef.current = setInterval(() => {
       setSimulationState((prevState) => {
         const nextState = calculateNextState(prevState);
-        // Check if the simulation just finished in this step
         if (nextState.isFinished && !prevState.isFinished) {
-           clearTimer(); // Stop the clock immediately
+          clearTimer();
         }
         return nextState;
       });
-    }, 1000); // Advance cycle every 1 second
-  }, [simulationState.isRunning, simulationState.isFinished]); // Dependencies
-
+    }, 1000);
+  }, [simulationState.isRunning, simulationState.isFinished]);
 
   const resetSimulation = React.useCallback(() => {
     clearTimer();
     setSimulationState(initialState);
   }, []);
 
-  const startSimulation = React.useCallback((submittedInstructions: string[]) => {
-    clearTimer(); // Clear previous timer just in case
-    if (submittedInstructions.length === 0) {
-      resetSimulation(); // Reset if no instructions submitted
-      return;
-    }
+  const startSimulation = React.useCallback(
+    (submittedInstructions: string[]) => {
+      clearTimer();
+      if (submittedInstructions.length === 0) {
+        resetSimulation();
+        return;
+      }
 
-    const calculatedMaxCycles = submittedInstructions.length + DEFAULT_STAGE_COUNT - 1;
-    const initialStages: Record<number, number | null> = {};
-    // Initialize stages for cycle 1
-    submittedInstructions.forEach((_, index) => {
-        const stageIndex = 1 - index - 1; // Calculate stage for cycle 1
-        if (stageIndex >= 0 && stageIndex < DEFAULT_STAGE_COUNT) {
-            initialStages[index] = stageIndex;
-        } else {
-            initialStages[index] = null;
-        }
+      const calculatedMaxCycles = submittedInstructions.length + DEFAULT_STAGE_COUNT;
+      const initialStages: Record<number, number | null> = {};
+      submittedInstructions.forEach((_, index) => {
+        const stageIndex = 1 - index - 1;
+        initialStages[index] = stageIndex >= 0 && stageIndex < DEFAULT_STAGE_COUNT ? stageIndex : null;
+      });
+
+      setSimulationState({
+        instructions: submittedInstructions,
+        currentCycle: 1,
+        maxCycles: calculatedMaxCycles,
+        isRunning: true,
+        stageCount: DEFAULT_STAGE_COUNT,
+        instructionStages: initialStages,
+        isFinished: false,
+      });
+    },
+    [resetSimulation]
+  );
+
+  const pauseSimulation = () => {
+    setSimulationState((prevState) => {
+      if (prevState.isRunning) {
+        clearTimer();
+        return { ...prevState, isRunning: false };
+      }
+      return prevState;
     });
-
-
-    setSimulationState({
-      instructions: submittedInstructions,
-      currentCycle: 1, // Start from cycle 1
-      maxCycles: calculatedMaxCycles,
-      isRunning: true,
-      stageCount: DEFAULT_STAGE_COUNT,
-      instructionStages: initialStages, // Set initial stages for cycle 1
-      isFinished: false,
-    });
-    // runClock will be triggered by the useEffect below when isRunning becomes true
-  }, [resetSimulation]);
-
-   const pauseSimulation = () => {
-     setSimulationState((prevState) => {
-       if (prevState.isRunning) {
-         clearTimer();
-         return { ...prevState, isRunning: false };
-       }
-       return prevState; // No change if already paused
-     });
-   };
+  };
 
   const resumeSimulation = () => {
-     setSimulationState((prevState) => {
-        // Resume only if paused, started, and not finished
-        if (!prevState.isRunning && prevState.currentCycle > 0 && !prevState.isFinished) {
-            return { ...prevState, isRunning: true };
-        }
-        return prevState; // No change if running, not started, or finished
-     });
-     // runClock will be triggered by useEffect
-   };
+    setSimulationState((prevState) => {
+      if (!prevState.isRunning && prevState.currentCycle > 0 && !prevState.isFinished) {
+        return { ...prevState, isRunning: true };
+      }
+      return prevState;
+    });
+  };
 
-
-  // Effect to manage the interval timer based on isRunning state
   React.useEffect(() => {
     if (simulationState.isRunning && !simulationState.isFinished) {
       runClock();
     } else {
       clearTimer();
+      
+      
+      
+      
     }
-    // Cleanup timer on unmount or when isRunning/isFinished changes
     return clearTimer;
   }, [simulationState.isRunning, simulationState.isFinished, runClock]);
 
-
-  // State value derived directly from simulationState
   const stateValue: SimulationState = simulationState;
 
   const actionsValue: SimulationActions = React.useMemo(
@@ -196,7 +314,7 @@ export function SimulationProvider({ children }: PropsWithChildren) {
       pauseSimulation,
       resumeSimulation,
     }),
-    [startSimulation, resetSimulation] // pause/resume don't change
+    [startSimulation, resetSimulation]
   );
 
   return (
@@ -208,7 +326,6 @@ export function SimulationProvider({ children }: PropsWithChildren) {
   );
 }
 
-// Custom hooks for easy context consumption
 export function useSimulationState() {
   const context = React.useContext(SimulationStateContext);
   if (context === undefined) {
@@ -224,3 +341,9 @@ export function useSimulationActions() {
   }
   return context;
 }
+
+
+
+
+
+
