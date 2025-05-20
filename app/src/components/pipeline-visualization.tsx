@@ -15,7 +15,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Download, Code2, Cpu, MemoryStick, CheckSquare } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useSimulationState } from "@/context/SimulationContext"; // Import context hook
-import { useState, useEffect } from "react";
 
 const STAGES = [
   { name: "IF", icon: Download },
@@ -34,6 +33,7 @@ export function PipelineVisualization() {
     isRunning,
     instructionStages,
     isFinished,
+    mode, // <-- Asegúrate de traer el modo
   } = useSimulationState();
 
   const totalCyclesToDisplay = maxCycles > 0 ? maxCycles : 0;
@@ -42,13 +42,13 @@ export function PipelineVisualization() {
     (_, i) => i + 1
   );
 
-  // Detect if there's a stall in the current cycle
   const stalls = instructions.map((_, instIndex) => {
     const currentStageIndex = instructionStages[instIndex];
     const prevStageIndex = instructionStages[instIndex - 1];
 
-    // Check for stall condition: current instruction is in ID (1), previous is in EX (2)
+    // Solo detectar stall si el modo es "stall"
     const isStalled =
+      mode === "stall" &&
       currentStageIndex === 1 &&
       prevStageIndex === 2 &&
       !isFinished &&
