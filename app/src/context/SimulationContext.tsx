@@ -53,24 +53,64 @@ const initialState: SimulationState = {
 };
 
 // Función auxiliar para parsear instrucciones MIPS
-function parseInstruction(inst: string): { rd?: string; rs?: string; rt?: string } {
+function parseInstruction(inst: string): { rd?: string; rs?: string; rt?: string; imm?: string; label?: string } {
   const [op, rest] = inst.trim().split(/\s+/, 2);
   const args = rest ? rest.split(',').map(a => a.trim()) : [];
 
-  if (op === 'add' || op === 'sub' || op === 'and' || op === 'or') {
-    return { rd: args[0], rs: args[1], rt: args[2] };
-  } else if (op === 'addi') {
-    return { rt: args[0], rs: args[1] };
-  } else if (op === 'lw') {
-    const match = args[1].match(/\((\$[a-z0-9]+)\)/i);
-    return { rt: args[0], rs: match?.[1] };
-  } else if (op === 'sw') {
-    const match = args[1].match(/\((\$[a-z0-9]+)\)/i);
-    return { rt: args[0], rs: match?.[1] };
+  switch (op) {
+    // Tipo R (rd, rs, rt)
+    case 'add':
+    case 'addu':
+    case 'sub':
+    case 'subu':
+    case 'and':
+    case 'or':
+    case 'slt':
+    case 'sltu':
+      return { rd: args[0], rs: args[1], rt: args[2] };
+
+    // Tipo I (rt, rs, inmediato)
+    case 'addi':
+    case 'addiu':
+    case 'andi':
+    case 'ori':
+    case 'slti':
+    case 'sltiu':
+      return { rt: args[0], rs: args[1], imm: args[2] };
+
+    // Carga y almacenamiento
+    case 'lw':
+    case 'sw':
+    case 'lb':
+    case 'sb': {
+      const match = args[1].match(/\((\$[a-z0-9]+)\)/i);
+      return { rt: args[0], rs: match?.[1] };
+    }
+
+    // Saltos condicionales
+    case 'beq':
+    case 'bne':
+      return { rs: args[0], rt: args[1], label: args[2] };
+
+    // Instrucciones shift (rd, rt, shamt)
+    case 'sll':
+    case 'srl':
+      return { rd: args[0], rt: args[1], imm: args[2] };
+
+    // Jumps
+    case 'j':
+    case 'jal':
+      return { label: args[0] };
+
+    // Jump register
+    case 'jr':
+      return { rs: args[0] };
+
+    default:
+      return {};
   }
-  return {};
-  
 }
+
 
 // Detecta dependencia RAW, usada solo para fines de demostración si se quisiera stalling
 function hasRawDependency(prevInst: string, currInst: string): boolean {

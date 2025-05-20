@@ -64,45 +64,58 @@ export function InstructionInput({ onInstructionsSubmit, onReset, isRunning }: I
   const disableInputAndStart = hasStarted && !isFinished;
 
   // ✅ Función para decodificar hexadecimal a MIPS
-  function decodeMIPSInstruction(hex: string): string {
-    const binary = parseInt(hex, 16).toString(2).padStart(32, '0');
-    const opcode = binary.slice(0, 6);
-    const rs = parseInt(binary.slice(6, 11), 2);
-    const rt = parseInt(binary.slice(11, 16), 2);
-    const rd = parseInt(binary.slice(16, 21), 2);
-    const shamt = parseInt(binary.slice(21, 26), 2);
-    const funct = binary.slice(26, 32);
-    const immediate = parseInt(binary.slice(16, 32), 2);
-    const address = parseInt(binary.slice(6), 2);
+function decodeMIPSInstruction(hex: string): string {
+  const binary = parseInt(hex, 16).toString(2).padStart(32, '0');
+  const opcode = binary.slice(0, 6);
+  const rs = parseInt(binary.slice(6, 11), 2);
+  const rt = parseInt(binary.slice(11, 16), 2);
+  const rd = parseInt(binary.slice(16, 21), 2);
+  const shamt = parseInt(binary.slice(21, 26), 2);
+  const funct = binary.slice(26, 32);
+  const immediate = parseInt(binary.slice(16, 32), 2);
+  const signedImmediate = (immediate & 0x8000) ? immediate - 0x10000 : immediate;
+  const address = parseInt(binary.slice(6), 2);
 
-    if (opcode === '000000') {
-      switch (funct) {
-        case '100000': return `add $${rd}, $${rs}, $${rt}`;
-        case '100010': return `sub $${rd}, $${rs}, $${rt}`;
-        case '100100': return `and $${rd}, $${rs}, $${rt}`;
-        case '100101': return `or $${rd}, $${rs}, $${rt}`;
-        case '101010': return `slt $${rd}, $${rs}, $${rt}`;
-        case '000000': return `sll $${rd}, $${rt}, ${shamt}`;
-        case '000010': return `srl $${rd}, $${rt}, ${shamt}`;
-        default: return `unknown R-type funct: ${funct}`;
-      }
-    }
-
-    switch (opcode) {
-      case '001000': return `addi $${rt}, $${rs}, ${immediate}`;
-      case '001100': return `andi $${rt}, $${rs}, ${immediate}`;
-      case '001101': return `ori $${rt}, $${rs}, ${immediate}`;
-      case '100011': 
-      haylw = true;
-      return `lw $${rt}, ${immediate}($${rs})`;
-      case '101011': return `sw $${rt}, ${immediate}($${rs})`;
-      case '000100': return `beq $${rs}, $${rt}, ${immediate}`;
-      case '000101': return `bne $${rs}, $${rt}, ${immediate}`;
-      case '000010': return `j ${address}`;
-      case '000011': return `jal ${address}`;
-      default: return `unknown opcode: ${opcode}`;
+  if (opcode === '000000') {
+    switch (funct) {
+      case '100000': return `add $${rd}, $${rs}, $${rt}`;
+      case '100001': return `addu $${rd}, $${rs}, $${rt}`;
+      case '100010': return `sub $${rd}, $${rs}, $${rt}`;
+      case '100011': return `subu $${rd}, $${rs}, $${rt}`;
+      case '100100': return `and $${rd}, $${rs}, $${rt}`;
+      case '100101': return `or $${rd}, $${rs}, $${rt}`;
+      case '101010': return `slt $${rd}, $${rs}, $${rt}`;
+      case '101011': return `sltu $${rd}, $${rs}, $${rt}`;
+      case '000000': return `sll $${rd}, $${rt}, ${shamt}`;
+      case '000010': return `srl $${rd}, $${rt}, ${shamt}`;
+      case '001000': return `jr $${rs}`;
+      default: return `unknown R-type funct: ${funct}`;
     }
   }
+
+  switch (opcode) {
+    // Tipo I
+    case '001000': return `addi $${rt}, $${rs}, ${signedImmediate}`;
+    case '001001': return `addiu $${rt}, $${rs}, ${signedImmediate}`;
+    case '001100': return `andi $${rt}, $${rs}, ${immediate}`;
+    case '001101': return `ori $${rt}, $${rs}, ${immediate}`;
+    case '001010': return `slti $${rt}, $${rs}, ${signedImmediate}`;
+    case '001011': return `sltiu $${rt}, $${rs}, ${signedImmediate}`;
+    case '100011': return `lw $${rt}, ${signedImmediate}($${rs})`;
+    case '101011': return `sw $${rt}, ${signedImmediate}($${rs})`;
+    case '100000': return `lb $${rt}, ${signedImmediate}($${rs})`;
+    case '101000': return `sb $${rt}, ${signedImmediate}($${rs})`;
+    case '000100': return `beq $${rs}, $${rt}, ${signedImmediate}`;
+    case '000101': return `bne $${rs}, $${rt}, ${signedImmediate}`;
+
+    // Tipo J
+    case '000010': return `j ${address}`;
+    case '000011': return `jal ${address}`;
+
+    default: return `unknown opcode: ${opcode}`;
+  }
+}
+
 
 
 
