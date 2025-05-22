@@ -7,6 +7,15 @@ import * as React from "react";
 // --------------- Constantes y tipos ---------------
 const STAGE_NAMES = ["IF", "ID", "EX", "MEM", "WB"] as const;
 
+// Agregar tipos para el forwarding
+interface ForwardingInfo {
+  from: number;  // índice de instrucción origen
+  to: number;    // índice de instrucción destino
+  source: "EX" | "MEM";  // etapa desde la que se forwardea
+  target: "rs" | "rt";   // registro destino
+  cycle: number;         // ciclo en que ocurre
+}
+
 interface SimulationState {
   instructions: string[];
   currentCycle: number;
@@ -16,6 +25,8 @@ interface SimulationState {
   instructionStages: Record<number, number | null>;
   isFinished: boolean;
   mode: "normal" | "stall" | "forwarding";
+  // Agregamos información de forwarding
+  forwardingPaths: ForwardingInfo[];
 }
 
 interface SimulationActions {
@@ -44,36 +55,38 @@ const initialState: SimulationState = {
   instructionStages: {},
   isFinished: false,
   mode: "normal",
+  forwardingPaths: [], // Inicializar paths de forwarding
 };
 
-// --------------- Utilidades ----------------
+// --------------- Utilidades extendidas ----------------
 
-// Devuelve true si la instrucción curr depende de un registro escrito por prev
-function hasDataHazard(prevHex: string, currHex: string): boolean {
-  // Función auxiliar: extrae rs / rt / rd
-  const decode = (hex: string) => {
-    const instr = parseInt(hex, 16);
-    const opcode = (instr >>> 26) & 0x3f; // 6 bits altos
+// Función auxiliar: extrae rs / rt / rd
+function decodeInstruction(hex: string) {
+  const instr = parseInt(hex, 16);
+  const opcode = (instr >>> 26) & 0x3f; // 6 bits altos
 
-    if (opcode === 0x00) {
-      // Tipo R
-      return {
-        type: "R" as const,
-        rs: (instr >>> 21) & 0x1f,
-        rt: (instr >>> 16) & 0x1f,
-        rd: (instr >>> 11) & 0x1f,
-      };
-    }
+  if (opcode === 0x00) {
+    // Tipo R
     return {
-      type: "I" as const,
+      type: "R" as const,
       opcode,
       rs: (instr >>> 21) & 0x1f,
       rt: (instr >>> 16) & 0x1f,
+      rd: (instr >>> 11) & 0x1f,
     };
+  }
+  return {
+    type: "I" as const,
+    opcode,
+    rs: (instr >>> 21) & 0x1f,
+    rt: (instr >>> 16) & 0x1f,
   };
+}
 
-  const prev = decode(prevHex);
-  const curr = decode(currHex);
+// Devuelve true si la instrucción curr depende de un registro escrito por prev
+function hasDataHazard(prevHex: string, currHex: string): boolean {
+  const prev = decodeInstruction(prevHex);
+  const curr = decodeInstruction(currHex);
 
   // destino de prev
   let prevDest: number | null = null;
@@ -91,6 +104,73 @@ function hasDataHazard(prevHex: string, currHex: string): boolean {
   return prevDest !== null && currSrc.includes(prevDest);
 }
 
+// Determina si puede haber forwarding entre prev->curr y devuelve la información
+function checkForwarding(
+  prevHex: string,
+  currHex: string,
+  prevIdx: number,
+  currIdx: number,
+  cycle: number,
+  prevStage: number,
+  currStage: number
+): ForwardingInfo | null {
+  if (currStage !== 2) return null; // Solo forwardear a EX
+
+  const prev = decodeInstruction(prevHex);
+  const curr = decodeInstruction(currHex);
+
+  // Obtener el registro destino de la instrucción anterior
+  let prevDest: number | null = null;
+  if (prev.type === "R") prevDest = prev.rd;
+  else if (prev.opcode === 0x23) prevDest = prev.rt; // lw
+  else if (prev.opcode !== 0x2b) prevDest = prev.rt; // I-tipo con destino en rt
+
+  // No hay destino, no hay forwarding
+  if (prevDest === null) return null;
+
+  // Ver qué registro fuente necesita forwarding
+  let targetReg: "rs" | "rt" | null = null;
+  
+  if (curr.rs === prevDest) {
+    targetReg = "rs";
+  } else if (curr.type === "R" || curr.opcode === 0x2b) { // Solo forwardear a rt en instrucciones R o sw
+    if (curr.rt === prevDest) {
+      targetReg = "rt";
+    }
+  }
+
+  if (targetReg === null) return null;
+
+  // Ahora determinamos desde qué etapa forwardear
+  let source: "EX" | "MEM" | null = null;
+  
+  // Si prev está en MEM (stage=3), forward desde MEM
+  if (prevStage === 3) {
+    source = "MEM";
+  } 
+  // Si prev está en EX (stage=2), forward desde EX (ALU a ALU)
+  else if (prevStage === 2) {
+    source = "EX";
+  }
+
+  // Caso especial: no hacer forward desde EX para operaciones de carga (lw)
+  if (prev.opcode === 0x23 && source === "EX") {
+    return null; // Las cargas (lw) necesitan un stall, no se puede forwardear desde EX
+  }
+
+  if (source !== null) {
+    return {
+      from: prevIdx,
+      to: currIdx,
+      source,
+      target: targetReg,
+      cycle
+    };
+  }
+
+  return null;
+}
+
 // --------------- Núcleo de simulación ---------------
 const calculateNextState = (state: SimulationState): SimulationState => {
   if (!state.isRunning || state.isFinished) return state;
@@ -98,37 +178,72 @@ const calculateNextState = (state: SimulationState): SimulationState => {
   const nextCycle = state.currentCycle + 1;
   const newStages: Record<number, number | null> = {};
   let stalled = false;
+  const newForwardingPaths = [...state.forwardingPaths];
 
+  // Primera pasada: detectar hazards y determinar posibles forwardings
   for (let i = 0; i < state.instructions.length; i++) {
     const stageIndex = nextCycle - i - 1; // etapa teórica
 
-    /* ---------- Stall por dependencia con instrucción inmediatamente anterior ---------- */
-    if (
-      state.mode === "stall" &&
-      i > 0 &&
-      stageIndex === 1 && // la i-ésima va a ID
-      hasDataHazard(state.instructions[i - 1], state.instructions[i])
-    ) {
-      const prevStage = state.instructionStages[i - 1];
-      const currStage = state.instructionStages[i];
-
-      if (prevStage === 2 && currStage === 1) {
-        stalled = true;
-        newStages[i] = currStage; // se queda en ID
-        continue;
+    // Si estamos en modo forwarding, intentamos resolverlo
+    if (state.mode === "forwarding" && i > 0) {
+      // La instrucción actual está en EX
+      if (stageIndex === 2 || state.instructionStages[i] === 2) {
+        // Buscar instrucciones anteriores que podrían forwardear
+        for (let j = 0; j < i; j++) {
+          const prevStage = state.instructionStages[j];
+          if (prevStage !== 2 && prevStage !== 3) continue; // Solo considerar instrucciones en EX o MEM
+          
+          const hazard = hasDataHazard(state.instructions[j], state.instructions[i]);
+          if (hazard) {
+            const fwInfo = checkForwarding(
+              state.instructions[j], 
+              state.instructions[i], 
+              j, i, nextCycle, 
+              prevStage, 
+              stageIndex
+            );
+            
+            if (fwInfo) {
+              // Si ya existe un forwarding para esta instrucción/ciclo, no duplicar
+              const exists = newForwardingPaths.some(
+                path => path.to === fwInfo.to && 
+                       path.cycle === fwInfo.cycle && 
+                       path.target === fwInfo.target
+              );
+              if (!exists) {
+                newForwardingPaths.push(fwInfo);
+              }
+              // Hazard resuelto mediante forwarding
+              continue;
+            }
+          }
+        }
       }
     }
 
-    /* ---------- Stall opcional para dependencias con cualquiera de las anteriores ---------- */
-    if (state.mode === "stall") {
+    /* ---------- Stall para cargas (incluso en modo forwarding) ---------- */
+    if ((state.mode === "stall" || state.mode === "forwarding") && i > 0) {
+      const prevInstr = decodeInstruction(state.instructions[i - 1]);
+      
+      if (prevInstr.opcode === 0x23) { // Es una instrucción lw
+        const currStage = state.instructionStages[i];
+        const prevStage = state.instructionStages[i - 1];
+
+        if (prevStage === 2 && currStage === 1 && hasDataHazard(state.instructions[i - 1], state.instructions[i])) {
+          stalled = true;
+          newStages[i] = currStage; // Se queda en ID
+          continue;
+        }
+      }
+    }
+
+    /* ---------- Stall normal en modo stall ---------- */
+    if (state.mode === "stall" && i > 0 && stageIndex === 1) {
       for (let j = 0; j < i; j++) {
         const prevStage = state.instructionStages[j];
         const currStage = state.instructionStages[i];
 
-        const hazard = hasDataHazard(
-          state.instructions[j],
-          state.instructions[i]
-        );
+        const hazard = hasDataHazard(state.instructions[j], state.instructions[i]);
 
         if (prevStage === 2 && currStage === 1 && hazard) {
           stalled = true;
@@ -155,6 +270,7 @@ const calculateNextState = (state: SimulationState): SimulationState => {
     instructionStages: newStages,
     isRunning: !finished,
     isFinished: finished,
+    forwardingPaths: newForwardingPaths
   };
 };
 
@@ -179,7 +295,7 @@ export function SimulationProvider({ children }: PropsWithChildren) {
 
   /* ---------- Acciones ---------- */
   const setMode = (mode: SimulationState["mode"]) =>
-    setSimState((p) => ({ ...p, mode }));
+    setSimState((p) => ({ ...p, mode, forwardingPaths: [] })); // Reiniciar paths al cambiar de modo
 
   const resetSimulation = () => {
     clearTimer();
@@ -206,6 +322,7 @@ export function SimulationProvider({ children }: PropsWithChildren) {
       stageCount: DEFAULT_STAGE_COUNT,
       instructionStages: initStages,
       isFinished: false,
+      forwardingPaths: [], // Resetear paths de forwarding
     }));
   };
 

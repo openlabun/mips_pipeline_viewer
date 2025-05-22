@@ -12,7 +12,7 @@ import {
   TableCaption,
 } from "@/components/ui/table";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Download, Code2, Cpu, MemoryStick, CheckSquare } from "lucide-react";
+import { Download, Code2, Cpu, MemoryStick, CheckSquare, CornerDownLeft } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useSimulationState } from "@/context/SimulationContext";
 
@@ -56,6 +56,35 @@ function hasDataHazard(prevHex: string, currHex: string): boolean {
 }
 /* ---------------------------------------------------------------- */
 
+// Descodificar instrucción para mostrar info registro
+function decodeRegisterInfo(hex: string): string {
+  try {
+    const instr = parseInt(hex, 16);
+    const opcode = (instr >>> 26) & 0x3f;
+
+    if (opcode === 0x00) { // Tipo R
+      const rs = (instr >>> 21) & 0x1f;
+      const rt = (instr >>> 16) & 0x1f;
+      const rd = (instr >>> 11) & 0x1f;
+      return `rs:$${rs}, rt:$${rt}, rd:$${rd}`;
+    } else if (opcode === 0x23) { // lw
+      const rs = (instr >>> 21) & 0x1f;
+      const rt = (instr >>> 16) & 0x1f;
+      return `rs:$${rs}, rt:$${rt} (dest)`;
+    } else if (opcode === 0x2b) { // sw
+      const rs = (instr >>> 21) & 0x1f;
+      const rt = (instr >>> 16) & 0x1f;
+      return `rs:$${rs}, rt:$${rt} (data)`;
+    } else { // Otros I-type
+      const rs = (instr >>> 21) & 0x1f;
+      const rt = (instr >>> 16) & 0x1f;
+      return `rs:$${rs}, rt:$${rt} (dest)`;
+    }
+  } catch {
+    return "";
+  }
+}
+
 const STAGES = [
   { name: "IF", icon: Download },
   { name: "ID", icon: Code2 },
@@ -73,6 +102,7 @@ export function PipelineVisualization() {
     instructionStages,
     isFinished,
     mode,
+    forwardingPaths,
   } = useSimulationState();
 
   const totalCycles = Math.max(maxCycles, 0);
@@ -93,7 +123,10 @@ export function PipelineVisualization() {
     return hasDataHazard(instructions[i - 1], instructions[i]) ? i : null;
   });
   const stallDetected = stalls.some((s) => s !== null);
-  /* -------------------------------------------------- */
+  
+  // Obtener forwarding activos para el ciclo actual
+  const currentForwardings = forwardingPaths.filter(fw => fw.cycle === cycle);
+  const hasForwarding = currentForwardings.length > 0;
 
   return (
     <Card className="w-full overflow-hidden">
@@ -104,7 +137,20 @@ export function PipelineVisualization() {
         <div className="overflow-x-auto">
           {stallDetected && (
             <div className="mb-4 p-4 bg-yellow-200 text-yellow-900 font-bold rounded">
-              Stall detected in cycle {cycle}! Pipeline execution delayed.
+              Stall detectado en ciclo {cycle}! Ejecución del pipeline retrasada.
+            </div>
+          )}
+
+          {hasForwarding && mode === "forwarding" && (
+            <div className="mb-4 p-4 bg-green-100 text-green-900 rounded">
+              <h3 className="font-bold mb-2">Forwarding activo en ciclo {cycle}:</h3>
+              <ul className="list-disc pl-5">
+                {currentForwardings.map((fw, idx) => (
+                  <li key={idx}>
+                    De instrucción {fw.from + 1} ({fw.source}) a instrucción {fw.to + 1} (registro {fw.target})
+                  </li>
+                ))}
+              </ul>
             </div>
           )}
 
@@ -113,8 +159,8 @@ export function PipelineVisualization() {
 
             <TableHeader>
               <TableRow>
-                <TableHead className="w-[150px] sticky left-0 bg-card z-10 border-r">
-                  Instruction
+                <TableHead className="w-[250px] sticky left-0 bg-card z-10 border-r">
+                  Instrucción
                 </TableHead>
                 {cycleNums.map((c) => (
                   <TableHead key={`cycle-${c}`} className="text-center w-16">
@@ -128,8 +174,11 @@ export function PipelineVisualization() {
               {instructions.map((inst, i) => (
                 <TableRow key={`inst-${i}`}>
                   {/* instrucción */}
-                  <TableCell className="font-mono sticky left-0 bg-card z-10 border-r">
-                    {inst}
+                  <TableCell className="sticky left-0 bg-card z-10 border-r">
+                    <div className="font-mono">{inst}</div>
+                    <div className="text-xs text-muted-foreground mt-1">
+                      {decodeRegisterInfo(inst)}
+                    </div>
                   </TableCell>
 
                   {cycleNums.map((c) => {
@@ -147,6 +196,15 @@ export function PipelineVisualization() {
                     const stalled =
                       stalls.includes(i) && currStage === 1 && c >= cycle;
 
+                    // Forwarding activo para esta instrucción y ciclo
+                    const isForwardTarget = mode === "forwarding" && forwardingPaths.some(
+                      fw => fw.to === i && fw.cycle === c
+                    );
+
+                    const isForwardSource = mode === "forwarding" && forwardingPaths.some(
+                      fw => fw.from === i && fw.cycle === c
+                    );
+
                     const animate = isCurr && isRunning && !isFinished;
                     const highlight = isCurr && !isRunning && !isFinished;
                     const past = inPipe && c < cycle;
@@ -160,6 +218,10 @@ export function PipelineVisualization() {
                             ? "bg-background"
                             : stalled
                             ? "bg-yellow-200 text-yellow-900 font-bold"
+                            : isForwardTarget
+                            ? "bg-green-200 text-green-900 font-bold"
+                            : isForwardSource
+                            ? "bg-blue-200 text-blue-900 font-bold"
                             : animate
                             ? "bg-blue-500 text-white animate-pulse"
                             : highlight
@@ -169,13 +231,18 @@ export function PipelineVisualization() {
                             : "bg-background"
                         )}
                       >
-                        {stageData && !isFinished && (
-                          <div className="flex flex-col items-center">
-                            <stageData.icon className="w-4 h-4 mb-1" />
-                            <span className="text-xs">{stageData.name}</span>
-                          </div>
-                        )}
-                        {stalled && <span className="text-xs">STALL</span>}
+                        <div className="flex flex-col items-center">
+                          {stageData && !isFinished && (
+                            <>
+                              <stageData.icon className="w-4 h-4 mb-1" />
+                              <span className="text-xs">{stageData.name}</span>
+                            </>
+                          )}
+                          {stalled && <span className="text-xs">STALL</span>}
+                          {isForwardTarget && mode === "forwarding" && (
+                            <CornerDownLeft className="w-4 h-4 ml-1" />
+                          )}
+                        </div>
                       </TableCell>
                     );
                   })}
@@ -183,6 +250,26 @@ export function PipelineVisualization() {
               ))}
             </TableBody>
           </Table>
+
+          {/* Leyenda para ayudar a entender los colores */}
+          <div className="mt-4 flex flex-wrap gap-4 justify-center">
+            <div className="flex items-center">
+              <div className="w-4 h-4 mr-2 bg-yellow-200"></div>
+              <span className="text-sm">Stall</span>
+            </div>
+            <div className="flex items-center">
+              <div className="w-4 h-4 mr-2 bg-green-200"></div>
+              <span className="text-sm">Recibe Forwarding</span>
+            </div>
+            <div className="flex items-center">
+              <div className="w-4 h-4 mr-2 bg-blue-200"></div>
+              <span className="text-sm">Fuente de Forwarding</span>
+            </div>
+            <div className="flex items-center">
+              <div className="w-4 h-4 mr-2 bg-blue-500"></div>
+              <span className="text-sm">Instrucción Actual</span>
+            </div>
+          </div>
         </div>
       </CardContent>
     </Card>
