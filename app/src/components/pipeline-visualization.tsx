@@ -130,34 +130,55 @@ export function PipelineVisualization() {
   // Llenar la matriz con el estado actual REAL de las instrucciones
   instructionStates.forEach(instState => {
     if (instState.isStall) {
-      // Manejar bubbles/stalls
+      // Manejar bubbles/stalls - Ahora duplicamos la etapa IF
       const stallKey = `stall-${instState.index}`;
       if (!pipelineMatrix[stallKey]) {
         pipelineMatrix[stallKey] = {};
       }
       
       if (instState.currentStage !== null) {
-        pipelineMatrix[stallKey][currentCycle] = {
+        // Duplicar la etapa IF en el ciclo actual si hay stall
+        if (instState.currentStage === 0) { // Si es IF
+          pipelineMatrix[stallKey][currentCycle] = {
+            stage: instState.currentStage,
+            isStall: true,
+            isActive: true,
+            isPast: false,
+            isFuture: false,
+            hex: instState.hex,
+            decoded: instState.decoded,
+            isStallDuplicate: true // Marcar como duplicado de stall
+          };
+        }
+
+        // La instrucción original se mueve al siguiente ciclo
+        pipelineMatrix[stallKey][currentCycle + 1] = {
           stage: instState.currentStage,
           isStall: true,
           isActive: true,
           isPast: false,
           isFuture: false,
           hex: instState.hex,
-          decoded: instState.decoded
+          decoded: instState.decoded,
+          hasStall: true // Marcar que tiene stall
         };
       }
     } else {
-      // Manejar instrucciones normales
+      // Manejar instrucciones normales con ajuste por stalls
       if (instState.currentStage !== null && instState.index >= 0) {
-        pipelineMatrix[instState.index][currentCycle] = {
+        const cycleOffset = instState.stallsInserted || 0;
+        pipelineMatrix[instState.index][currentCycle + cycleOffset] = {
           stage: instState.currentStage,
           isStall: false,
           isActive: true,
           isPast: false,
           isFuture: false,
           hex: instState.hex,
-          decoded: instState.decoded
+          decoded: instState.decoded,
+          hasForwarding: forwardingPaths.some(path => 
+            (path.from.instructionIndex === instState.index && path.from.stage === instState.currentStage) ||
+            (path.to.instructionIndex === instState.index && path.to.stage === instState.currentStage)
+          )
         };
       }
     }
@@ -229,34 +250,24 @@ export function PipelineVisualization() {
         </CardTitle>
       </CardHeader>
       <CardContent>
-        {/* Legend - Actualizada para incluir diferentes tipos de hazards */}
+        {/* Legend actualizada */}
         <div className="mb-4 flex flex-wrap gap-4 text-xs">
           <div className="flex items-center gap-1">
             <div className="w-3 h-3 bg-blue-500 rounded"></div>
             <span>Etapa Actual</span>
           </div>
           <div className="flex items-center gap-1">
+            <div className="w-3 h-3 bg-yellow-200 rounded"></div>
+            <span>Forwarding</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <div className="w-3 h-3 bg-red-200 rounded"></div>
+            <span>Stall</span>
+          </div>
+          <div className="flex items-center gap-1">
             <div className="w-3 h-3 bg-secondary rounded"></div>
             <span>Etapa Pasada</span>
           </div>
-          <div className="flex items-center gap-1">
-            <div className="w-3 h-3 bg-orange-200 rounded"></div>
-            <span>Stall/Bubble</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <div className="w-3 h-3 bg-red-100 border border-red-400 rounded"></div>
-            <span>RAW Hazard</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <div className="w-3 h-3 bg-purple-100 border border-purple-400 rounded"></div>
-            <span>Load-Use Hazard</span>
-          </div>
-          {forwardingEnabled && (
-            <div className="flex items-center gap-1">
-              <ArrowRight className="w-3 h-3 text-blue-500" />
-              <span>Forwarding Path</span>
-            </div>
-          )}
         </div>
 
         <div className="overflow-x-auto">
@@ -349,19 +360,15 @@ export function PipelineVisualization() {
                         key={`inst-${instIndex}-cycle-${c}`}
                         className={cn(
                           'text-center w-20 h-16 relative transition-all duration-300 border-l border-muted/20',
-                          // Coloreado basado en el estado real y tipo de hazard - orden ajustado para prioridad correcta
+                          // Coloreado actualizado para matching con la referencia
                           isFinished ? 'bg-background' :
-                          hasLoadUseHazard ? 'bg-purple-100 border border-purple-400 text-purple-900' :
-                          hasRawHazard ? 'bg-red-100 border border-red-400 text-red-900' :
-                          isActiveStage ? 'bg-blue-500 text-white shadow-sm' : // Estilo más visible para la etapa actual
-                          isPastCycle ? 'bg-secondary/60 text-secondary-foreground' :
-                          isFutureCycle ? 'bg-muted/30 text-muted-foreground' :
+                          cellState.hasStall ? 'bg-red-200' :
+                          cellState.hasForwarding ? 'bg-yellow-200' :
+                          isActiveStage ? 'bg-blue-500 text-white shadow-sm' :
+                          isPastCycle ? 'bg-secondary/60' :
                           'bg-background',
-                          // Usar una animación personalizada en lugar de animate-pulse para todas las filas
-                          isActiveStage && isRunning && 'animate-[pulse_2s_ease-in-out_infinite]',
-                          // Indicadores de forwarding
-                          hasForwardingFrom && 'ring-2 ring-blue-400 ring-inset',
-                          hasForwardingTo && 'ring-2 ring-green-400 ring-inset'
+                          // Animación solo para etapas activas sin stall
+                          isActiveStage && isRunning && !cellState.hasStall && 'animate-[pulse_2s_ease-in-out_infinite]'
                         )}
                         style={{
                           // Asegurarse de que no haya problemas con la animación en filas pares
