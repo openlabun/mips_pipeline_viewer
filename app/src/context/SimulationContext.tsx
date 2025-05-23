@@ -35,6 +35,9 @@ interface SimulationActions {
   pauseSimulation: () => void;
   resumeSimulation: () => void;
   setMode: (m: "normal" | "stall" | "forwarding") => void;
+  nextCycle: () => void;
+  previousCycle: () => void;
+  goToCycle: (cycle: number) => void;
 }
 
 const SimulationStateContext = React.createContext<SimulationState | undefined>(
@@ -339,6 +342,89 @@ export function SimulationProvider({ children }: PropsWithChildren) {
         : p
     );
 
+  const nextCycle = () => {
+    setSimState((prev) => {
+      // Solo avanza si no está en el último ciclo y la simulación no está corriendo
+      if (prev.currentCycle < prev.maxCycles && !prev.isRunning) {
+        const next = prev.currentCycle + 1;
+        // Calcular nuevo estado para ese ciclo
+        const newStages = { ...prev.instructionStages };
+        // Lógica para actualizar etapas según el nuevo ciclo
+        for (let i = 0; i < prev.instructions.length; i++) {
+          const stageIndex = next - i - 1;
+          if (stageIndex >= 0 && stageIndex < prev.stageCount) {
+            newStages[i] = stageIndex;
+          } else {
+            newStages[i] = null;
+          }
+        }
+        
+        return {
+          ...prev,
+          currentCycle: next,
+          instructionStages: newStages,
+          isFinished: next >= prev.maxCycles,
+        };
+      }
+      return prev;
+    });
+  };
+
+  const previousCycle = () => {
+    setSimState((prev) => {
+      // Solo retrocede si no está en el primer ciclo y no está corriendo
+      if (prev.currentCycle > 1 && !prev.isRunning) {
+        const previous = prev.currentCycle - 1;
+        // Calcular nuevo estado para ese ciclo
+        const newStages = { ...prev.instructionStages };
+        // Lógica para actualizar etapas según el nuevo ciclo
+        for (let i = 0; i < prev.instructions.length; i++) {
+          const stageIndex = previous - i - 1;
+          if (stageIndex >= 0 && stageIndex < prev.stageCount) {
+            newStages[i] = stageIndex;
+          } else {
+            newStages[i] = null;
+          }
+        }
+        
+        return {
+          ...prev,
+          currentCycle: previous,
+          instructionStages: newStages,
+          isFinished: false,
+        };
+      }
+      return prev;
+    });
+  };
+
+  const goToCycle = (cycle: number) => {
+    setSimState((prev) => {
+      // Validar que el ciclo sea válido
+      if (cycle >= 1 && cycle <= prev.maxCycles && !prev.isRunning) {
+        // Calcular nuevo estado para ese ciclo
+        const newStages = { ...prev.instructionStages };
+        // Actualizar etapas para todas las instrucciones
+        for (let i = 0; i < prev.instructions.length; i++) {
+          const stageIndex = cycle - i - 1;
+          if (stageIndex >= 0 && stageIndex < prev.stageCount) {
+            newStages[i] = stageIndex;
+          } else {
+            newStages[i] = null;
+          }
+        }
+        
+        return {
+          ...prev,
+          currentCycle: cycle,
+          instructionStages: newStages,
+          isFinished: cycle >= prev.maxCycles,
+        };
+      }
+      return prev;
+    });
+  };
+
   /* ---------- Reloj ---------- */
   React.useEffect(() => {
     if (simState.isRunning && !simState.isFinished) runClock();
@@ -355,6 +441,9 @@ export function SimulationProvider({ children }: PropsWithChildren) {
       pauseSimulation,
       resumeSimulation,
       setMode,
+      nextCycle,
+      previousCycle,
+      goToCycle,
     }),
     []
   );
