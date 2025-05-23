@@ -124,9 +124,7 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
         if (instrIF.rs === instrID.rd || instrIF.rt === instrID.rt) {
           return true;
         }
-        if (
-          (lw === 1 && instrIF.rs === instrID.rt) 
-        ) {
+        if (lw === 1 && instrIF.rs === instrID.rt) {
           return true;
         }
       }
@@ -171,6 +169,20 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
           break;
         } else {
           console.log("El estado del hazard es: false");
+        }
+      }
+      const instrEX = decodeInstruction(currentState.instructions[i - 2]);
+      if (instrEX) {
+        const instrMEM = decodeInstruction(currentState.instructions[i - 3]);
+        if (instrMEM && hasHazard(instrEX, instrMEM)) {
+          console.log("El forward viene de la mesa MEM");
+        } else {
+          const instrWB = decodeInstruction(currentState.instructions[i - 4]);
+          if (instrWB && hasHazard(instrEX, instrWB)) {
+            console.log("El forward viene de la mesa WB");
+          } else{
+            console.log("El forward viene de la mesa ID");
+          }
         }
       }
     }
