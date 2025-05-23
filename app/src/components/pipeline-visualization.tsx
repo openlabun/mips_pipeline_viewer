@@ -96,8 +96,18 @@ export function PipelineVisualization() {
                     
                     // Check if this cell has a historical hazard - usar expectedStageIndex para encontrar hazards históricos
                     const historicalHazardKey = `${instIndex}-${expectedStageIndex}`;
-                    const hasHistoricalHazard = historicalHazards && historicalHazards[historicalHazardKey];
-                    const historicalHazardType = hasHistoricalHazard ? historicalHazards[historicalHazardKey].type : null;
+                    const hasHistoricalHazard = historicalHazards && 
+                      Object.keys(historicalHazards).some(key => {
+                        const [histInstIndex, _, histStageIndex] = key.split('-');
+                        return Number(histInstIndex) === instIndex && 
+                               Number(histStageIndex) === expectedStageIndex;
+                      });
+                    const historicalHazardType = hasHistoricalHazard ? 
+                      (Object.entries(historicalHazards).find(([key, _value]) => {
+                        const [histInstIndex, _unused, histStageIndex] = key.split('-');
+                        return Number(histInstIndex) === instIndex && 
+                               Number(histStageIndex) === expectedStageIndex;
+                      }) || [null, { type: null }])[1].type : null;
                     
                     // Asegúrate de usar los hazards históricos correctamente
                     const effectiveHazard = hasHazard || hasHistoricalHazard;

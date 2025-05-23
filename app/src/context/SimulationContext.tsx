@@ -17,15 +17,11 @@ interface SimulationState {
   stageCount: number;
   instructionStages: Record<number, number | null>;
   isFinished: boolean;
-  // Add new state properties
   forwardingEnabled: boolean;
   stallingEnabled: boolean;
-  // Track hazards in the pipeline
   hazards: Record<string, { type: 'stall' | 'forward' }>;
-  // Track bubbles in the pipeline
   bubbles: Record<string, boolean>;
   historicalBubbles: Record<string, { cycle: number, stageIndex: number }>;
-  // Añadir historial de hazards para persistencia visual
   historicalHazards: Record<string, { type: 'stall' | 'forward', cycle: number }>;
 }
 
@@ -35,7 +31,6 @@ interface SimulationActions {
   resetSimulation: () => void;
   pauseSimulation: () => void;
   resumeSimulation: () => void;
-  // Add toggle actions
   toggleForwarding: () => void;
   toggleStalling: () => void;
 }
@@ -55,80 +50,176 @@ const initialState: SimulationState = {
   instructionStages: {},
   isFinished: false,
   forwardingEnabled: false,
-  stallingEnabled: true, // Default to stalling
-  hazards: {}, // Empty hazards initially
-  bubbles: {}, // Empty bubbles initially
+  stallingEnabled: false,
+  hazards: {},
+  bubbles: {},
   historicalBubbles: {},
-  historicalHazards: {}, // Nuevo campo para el historial
+  historicalHazards: {},
 };
 
-// Helper to detect hazards with more realistic behavior
 const detectHazards = (state: SimulationState): Record<string, { type: 'stall' | 'forward' }> => {
   const hazards: Record<string, { type: 'stall' | 'forward' }> = {};
   const { instructions, currentCycle, instructionStages, forwardingEnabled, stallingEnabled } = state;
   
-  // Si ambos están desactivados, no detectar hazards
   if (!forwardingEnabled && !stallingEnabled) {
     return hazards;
   }
   
-  // Track instructions at each pipeline stage for dependency analysis
-  const instructionsAtStage: Record<number, number[]> = {};
+  interface InstructionInfo {
+    type: string;
+    regsRead: number[];
+    regsWritten: number[];
+    isLoad: boolean;
+  }
+
+  const parseInstruction = (hexInst: string): InstructionInfo => {
+    if (!/^[0-9a-fA-F]{8}$/.test(hexInst)) {
+      return {
+        type: 'invalid',
+        regsRead: [],
+        regsWritten: [],
+        isLoad: false,
+      };
+    }
+    
+    const instruction = parseInt(hexInst, 16);
+    
+    const opcode = (instruction >>> 26) & 0x3F;        // bits 31-26
+    const rs = (instruction >>> 21) & 0x1F;            // bits 25-21
+    const rt = (instruction >>> 16) & 0x1F;            // bits 20-16
+    const rd = (instruction >>> 11) & 0x1F;            // bits 15-11
+    const funct = instruction & 0x3F;                  // bits 5-0
+    
+    let type = '';
+    let regsRead: number[] = [];
+    let regsWritten: number[] = [];
+    
+    if (opcode === 0) {
+      switch (funct) {
+        case 0x20:
+        case 0x21:
+        case 0x22:
+        case 0x23:
+        case 0x24:
+        case 0x25:
+        case 0x26:
+        case 0x27:
+          type = 'R-arithmetic';
+          regsRead = [rs, rt].filter(r => r !== 0);
+          regsWritten = rd !== 0 ? [rd] : [];
+          break;
+          
+        default:
+          type = 'R-unknown';
+          regsRead = [rs, rt].filter(r => r !== 0);
+          regsWritten = rd !== 0 ? [rd] : [];
+      }
+    }
+    else if ((opcode >= 0x20 && opcode <= 0x26) || opcode === 0x30 || opcode === 0x31 || opcode === 0x34 || opcode === 0x35) {
+      type = 'load';
+      regsRead = [rs].filter(r => r !== 0);
+      regsWritten = rt !== 0 ? [rt] : []; 
+    }
+    else if (opcode >= 0x28 && opcode <= 0x2E) {
+      type = 'store';
+      regsRead = [rs, rt].filter(r => r !== 0); 
+      regsWritten = []; 
+    }
+    else if ([0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E].includes(opcode)) {
+      type = 'I-arithmetic';
+      regsRead = [rs].filter(r => r !== 0);
+      regsWritten = rt !== 0 ? [rt] : [];
+    }
+    else if (opcode === 0x0F) {
+      type = 'lui';
+      regsRead = [];
+      regsWritten = rt !== 0 ? [rt] : [];
+    }
+    else {
+      type = 'unknown';
+      regsRead = [rs, rt].filter(r => r !== 0);
+      regsWritten = [];
+    }
+    
+    return {
+      type,
+      regsRead,
+      regsWritten,
+      isLoad: type === 'load',
+    };
+  };
   
-  // Populate instructions at each stage
+  const instructionsAtStage: Record<number, Array<{
+    index: number,
+    info: ReturnType<typeof parseInstruction>
+  }>> = {};
+  
   instructions.forEach((instruction, instIndex) => {
     const stageIndex = instructionStages[instIndex];
     if (stageIndex !== null) {
       if (!instructionsAtStage[stageIndex]) {
         instructionsAtStage[stageIndex] = [];
       }
-      instructionsAtStage[stageIndex].push(instIndex);
+      instructionsAtStage[stageIndex].push({
+        index: instIndex,
+        info: parseInstruction(instruction)
+      });
     }
   });
   
-  // Detect RAW hazards
-  // Instructions in ID stage (1) may need values from instructions in EX (2) or MEM (3)
   const instructionsInID = instructionsAtStage[1] || [];
   const instructionsInEX = instructionsAtStage[2] || [];
   const instructionsInMEM = instructionsAtStage[3] || [];
+  const instructionsInWB = instructionsAtStage[4] || [];
+
+  instructionsInID.forEach(({ index: idIndex, info: idInfo }) => {
+    const hazardKey = `${idIndex}-${currentCycle}`;
+    if (idInfo.type === 'invalid') return;
+
+    idInfo.regsRead.forEach(readReg => {
+      if (readReg === 0) return;
   
-  instructionsInID.forEach(idIndex => {
-    // Simple pattern-based dependency detection using last hex digit of instruction
-    // In a real system, you'd analyze register fields in the instructions
-    const idInstruction = instructions[idIndex];
-    const lastDigit = idInstruction.slice(-1);
-    
-    // Check for dependency with EX stage instructions (simulating ALU result dependency)
-    for (const exIndex of instructionsInEX) {
-      const exInstruction = instructions[exIndex];
-      // If last hex digit matches, simulate a RAW hazard
-      if (exInstruction.slice(-1) === lastDigit) {
-        const key = `${idIndex}-${currentCycle}`;
-        // Determinar tipo de hazard basado en qué está habilitado
+      const exProducer = instructionsInEX.find(({ info }) => 
+        info.regsWritten.includes(readReg)
+      );
+      
+      if (exProducer) {
+        if (exProducer.info.isLoad && stallingEnabled) {
+          hazards[hazardKey] = { type: 'stall' };
+        } 
+        else if (forwardingEnabled) {
+          hazards[hazardKey] = { type: 'forward' };
+        }
+        else if (stallingEnabled) {
+          hazards[hazardKey] = { type: 'stall' };
+        }
+      }
+      
+      if (hazards[hazardKey]) return;
+      
+      const memProducer = instructionsInMEM.find(({ info }) => 
+        info.regsWritten.includes(readReg)
+      );
+      
+      if (memProducer) {
         if (forwardingEnabled) {
-          hazards[key] = { type: 'forward' };
-        } else if (stallingEnabled) {
-          hazards[key] = { type: 'stall' };
+          hazards[hazardKey] = { type: 'forward' };
+        } 
+        else if (stallingEnabled) {
+          hazards[hazardKey] = { type: 'stall' };
         }
-        break;
       }
-    }
+      
+      if (hazards[hazardKey] || forwardingEnabled) return;
     
-    // Check for dependency with MEM stage instructions (simulating load-use hazard)
-    if (!hazards[`${idIndex}-${currentCycle}`]) {
-      for (const memIndex of instructionsInMEM) {
-        const memInstruction = instructions[memIndex];
-        // If instruction in MEM starts with '8' (simulating a load)
-        // and its last digit matches the ID instruction
-        if (memInstruction.startsWith('8') && memInstruction.slice(-1) === lastDigit) {
-          const key = `${idIndex}-${currentCycle}`;
-          // Load-use hazards need stalling even with forwarding
-          // But for demo purposes, allow forwarding to work for all hazards if enabled
-          hazards[key] = { type: forwardingEnabled ? 'forward' : 'stall' };
-          break;
-        }
+      const wbProducer = instructionsInWB.find(({ info }) => 
+        info.regsWritten.includes(readReg)
+      );
+      
+      if (wbProducer && stallingEnabled) {
+        hazards[hazardKey] = { type: 'stall' };
       }
-    }
+    });
   });
   
   return hazards;
@@ -142,25 +233,15 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
 
   const nextCycle = currentState.currentCycle + 1;
   const newInstructionStages: Record<number, number | null> = {};
-  let activeInstructions = 0;
-  
-  // Copy the current stages first to apply hazard resolution
   const tempStages = { ...currentState.instructionStages };
-  
-  // Detect hazards in current state
   const hazards = detectHazards(currentState);
-  
-  // Update historical hazards - add new hazards to the history
   const newHistoricalHazards = { ...currentState.historicalHazards };
 
-// Add all current hazards to historical record with their stage
 Object.entries(hazards).forEach(([key, value]) => {
   const [instIndex, cycleStr] = key.split('-');
-  // Obtener la etapa actual de esta instrucción cuando ocurrió el hazard
   const stageIndex = currentState.instructionStages[Number(instIndex)];
   if (stageIndex !== null) {
-    // Crear una clave histórica basada en instrucción y etapa (NO ciclo)
-    const historicalKey = `${instIndex}-${stageIndex}`;
+    const historicalKey = `${instIndex}-${cycleStr}-${stageIndex}`;
     newHistoricalHazards[historicalKey] = { 
       type: value.type,
       cycle: Number(cycleStr)
@@ -168,35 +249,31 @@ Object.entries(hazards).forEach(([key, value]) => {
   }
 });
   
-  // Check if we need to apply stalling
   const stallingApplied = currentState.stallingEnabled && Object.keys(hazards).length > 0 &&
     Object.values(hazards).some(h => h.type === 'stall');
-  
-  // Crear burbujas para el ciclo actual
+
   const bubbles: Record<string, boolean> = {};
   
-  // First pass: Identify stalled instructions and create bubbles
   if (stallingApplied) {
-    // Find the earliest instruction that's stalled
     let earliestStalledIdx = -1;
+    let earliestStalledStage = 5;
     
     for (let i = 0; i < currentState.instructions.length; i++) {
       const hazardKey = Object.keys(hazards).find(k => k.startsWith(`${i}-`));
       if (hazardKey && hazards[hazardKey].type === 'stall') {
-        if (earliestStalledIdx === -1 || i < earliestStalledIdx) {
+        const stage = tempStages[i] || 0;
+        if (earliestStalledIdx === -1 || stage < earliestStalledStage) {
           earliestStalledIdx = i;
+          earliestStalledStage = stage;
         }
       }
     }
     
-    // If we found a stalled instruction, insert a bubble after it in the pipeline
     if (earliestStalledIdx !== -1) {
-      // Mark where bubble will appear (stage after the stalled instruction)
       const stalledStage = tempStages[earliestStalledIdx];
       if (stalledStage !== null) {
         const bubbleKey = `bubble-${nextCycle}-${stalledStage + 1}`;
         bubbles[bubbleKey] = true;
-        
       }
     }
   }
@@ -210,14 +287,11 @@ Object.entries(hazards).forEach(([key, value]) => {
     if (stallingApplied) {
       const instHazardKey = Object.keys(hazards).find(k => k.startsWith(`${index}-`));
       if (instHazardKey && hazards[instHazardKey].type === 'stall') {
-        // This instruction is stalled - it stays at the same stage
         stageIndex = tempStages[index] || 0;
       } else {
-        // Check if any earlier instruction is stalled (all earlier instructions must wait)
         for (let i = 0; i < index; i++) {
           const earlierHazardKey = Object.keys(hazards).find(k => k.startsWith(`${i}-`));
           if (earlierHazardKey && hazards[earlierHazardKey].type === 'stall') {
-            // An earlier instruction is stalled, so this one must also wait
             stageIndex = tempStages[index] || 0;
             break;
           }
@@ -227,26 +301,20 @@ Object.entries(hazards).forEach(([key, value]) => {
 
     if (stageIndex >= 0 && stageIndex < currentState.stageCount) {
       newInstructionStages[index] = stageIndex;
-      activeInstructions++;
     } else {
       newInstructionStages[index] = null;
     }
   });
 
-  // Calculate completion cycle accounting for stalls
-  const stallCycles = stallingApplied ? 1 : 0; // For simplicity, assume 1 cycle of stall at a time
+  const stallCycles = stallingApplied ? 1 : 0;
   const completionCycle = currentState.instructions.length > 0
     ? currentState.instructions.length + currentState.stageCount - 1 + stallCycles
     : 0;
 
   const isFinished = nextCycle > completionCycle;
-  
-  // Create a new historical bubbles record that preserves existing history
   const newHistoricalBubbles = { ...currentState.historicalBubbles };
   
-  // Add current bubbles to the historical record
   Object.keys(bubbles).forEach(key => {
-    // Asegurarse de preservar la clave original completa, no solo la etapa
     newHistoricalBubbles[key] = {
       cycle: nextCycle,
       stageIndex: Number(key.split('-')[2])
@@ -259,10 +327,10 @@ Object.entries(hazards).forEach(([key, value]) => {
     instructionStages: newInstructionStages,
     isRunning: !isFinished,
     isFinished,
-    hazards, // Store detected hazards in state
-    bubbles, // Store bubbles in state for visualization
-    historicalBubbles: newHistoricalBubbles, // Use the merged historical bubbles
-    historicalHazards: newHistoricalHazards, // Actualizar el historial
+    hazards,
+    bubbles,
+    historicalBubbles: newHistoricalBubbles,
+    historicalHazards: newHistoricalHazards,
   };
 };
 
@@ -358,14 +426,12 @@ export function SimulationProvider({ children }: PropsWithChildren) {
      // runClock will be triggered by useEffect
    };
 
-  // Add toggle handlers
   const toggleForwarding = React.useCallback(() => {
     setSimulationState(prevState => {
       const newForwardingEnabled = !prevState.forwardingEnabled;
       return {
         ...prevState,
         forwardingEnabled: newForwardingEnabled,
-        // Si activamos forwarding, desactivamos stalling automáticamente
         stallingEnabled: newForwardingEnabled ? false : prevState.stallingEnabled
       };
     });
@@ -377,12 +443,10 @@ export function SimulationProvider({ children }: PropsWithChildren) {
       return {
         ...prevState,
         stallingEnabled: newStallingEnabled,
-        // Si activamos stalling, desactivamos forwarding automáticamente
         forwardingEnabled: newStallingEnabled ? false : prevState.forwardingEnabled
       };
     });
   }, []);
-
 
   // Effect to manage the interval timer based on isRunning state
   React.useEffect(() => {
