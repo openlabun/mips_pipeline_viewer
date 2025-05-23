@@ -24,6 +24,7 @@ export interface InstructionState {
   currentStage: number | null; // 0-4 for stages, null if not in pipeline
   isStall: boolean; // Si esta instrucción es un bubble/stall
   stallsInserted: number; // Número de stalls insertados antes de esta instrucción
+  hazardType?: 'raw' | 'load-use' | null; // Tipo de hazard que afecta a esta instrucción
 }
 
 // Define the shape of the context state
@@ -44,6 +45,13 @@ interface SimulationState {
   // Visual information
   forwardingPaths: ForwardingPath[]; // Paths activos en el ciclo actual
   stallsThisCycle: number[]; // Instrucciones que son stalls en este ciclo
+  loadUseHazards: number[]; // Instrucciones con load-use hazards en este ciclo
+  rawHazards: number[]; // Instrucciones con RAW hazards en este ciclo
+
+  // Acumuladores de hazards para estadísticas
+  totalStallsInserted: number; // Total de stalls insertados en toda la simulación
+  instructionsWithLoadUseHazards: Set<number>; // Instrucciones que han tenido load-use hazards
+  instructionsWithRawHazards: Set<number>; // Instrucciones que han tenido RAW hazards
 }
 
 // Define the shape of the context actions
@@ -75,6 +83,11 @@ const initialState: SimulationState = {
   forwardingEnabled: false,
   forwardingPaths: [],
   stallsThisCycle: [],
+  loadUseHazards: [],
+  rawHazards: [],
+  totalStallsInserted: 0,
+  instructionsWithLoadUseHazards: new Set<number>(),
+  instructionsWithRawHazards: new Set<number>(),
 };
 
 /**
@@ -130,6 +143,8 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
   // Detectar si hay hazards que requieren stalls
   let needsStall = false;
   const forwardingPaths: ForwardingPath[] = [];
+  const loadUseHazards: number[] = [];
+  const rawHazards: number[] = [];
 
   if (currentState.stallsEnabled) {
     // Revisar hazards entre instrucciones en ID y EX/MEM
@@ -144,6 +159,9 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
         console.log('Registros en conflicto:', instInEX.decoded.writesTo.filter(reg =>
           instInID.decoded.readsFrom.includes(reg)
         ));
+
+        // Marcar la instrucción con hazard RAW
+        rawHazards.push(instInID.index);
 
         if (currentState.forwardingEnabled && canForward(instInEX.decoded, instInID.decoded, 1)) {
           // Puede resolverse con forwarding
@@ -168,6 +186,8 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
       if (instInMEM && hasRAWHazard(instInMEM.decoded, instInID.decoded)) {
         if (instInMEM.decoded.isLoad) {
           // Load-use hazard: siempre necesita stall
+          loadUseHazards.push(instInID.index);
+          console.log(`LOAD-USE HAZARD DETECTADO: Entre instrucción ${instInMEM.index} (${instInMEM.hex}) en MEM y ${instInID.index} (${instInID.hex}) en ID`);
           needsStall = true;
         } else if (currentState.forwardingEnabled && canForward(instInMEM.decoded, instInID.decoded, 2)) {
           // Puede resolverse con forwarding
@@ -182,6 +202,7 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
             });
           });
         } else {
+          rawHazards.push(instInID.index);
           needsStall = true;
         }
       }
@@ -218,6 +239,16 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
       if (inst) {
         const newInst = { ...inst };
         // No cambia currentStage - se queda en la misma etapa
+        
+        // Marcar la instrucción en ID si tiene un hazard
+        if (stage === 1) {
+          if (loadUseHazards.includes(inst.index)) {
+            newInst.hazardType = 'load-use';
+          } else if (rawHazards.includes(inst.index)) {
+            newInst.hazardType = 'raw';
+          }
+        }
+        
         newInstructionStates.push(newInst);
       }
     });
@@ -282,10 +313,23 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
 
 
   console.log('Nuevo estado:', newInstructionStates.map(i =>
-    `Inst ${i.index} (${i.hex}): Etapa ${i.currentStage !== null ? STAGE_NAMES[i.currentStage] : 'COMPLETA'}${i.isStall ? ' [BUBBLE]' : ''}`
+    `Inst ${i.index} (${i.hex}): Etapa ${i.currentStage !== null ? STAGE_NAMES[i.currentStage] : 'COMPLETA'}${i.isStall ? ' [BUBBLE]' : ''}${i.hazardType ? ` [HAZARD: ${i.hazardType}]` : ''}`
   ));
   console.log(`Forwarding Paths: ${forwardingPaths.length}`);
+  console.log(`Load-Use Hazards: ${loadUseHazards.length}`);
+  console.log(`RAW Hazards: ${rawHazards.length}`);
   console.log('----------------------------------------');
+
+  // Crear copias de los conjuntos acumulativos para actualizarlos
+  const updatedLoadUseHazards = new Set(currentState.instructionsWithLoadUseHazards);
+  const updatedRawHazards = new Set(currentState.instructionsWithRawHazards);
+  
+  // Añadir los nuevos hazards a los acumuladores
+  loadUseHazards.forEach(instIdx => updatedLoadUseHazards.add(instIdx));
+  rawHazards.forEach(instIdx => updatedRawHazards.add(instIdx));
+  
+  // Contar los nuevos stalls insertados en este ciclo
+  const newStallsInsertedThisCycle = needsStall ? 1 : 0;
 
   return {
     ...currentState,
@@ -294,10 +338,14 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
     isFinished: allInstructionsProcessed,
     isRunning: !allInstructionsProcessed,
     forwardingPaths,
-    stallsThisCycle: newInstructionStates.filter(inst => inst.isStall).map(inst => inst.index)
+    stallsThisCycle: newInstructionStates.filter(inst => inst.isStall).map(inst => inst.index),
+    loadUseHazards,
+    rawHazards,
+    // Actualizar los contadores acumulativos
+    totalStallsInserted: currentState.totalStallsInserted + newStallsInsertedThisCycle,
+    instructionsWithLoadUseHazards: updatedLoadUseHazards,
+    instructionsWithRawHazards: updatedRawHazards
   };
-
-
 };
 
 // Create the provider component
@@ -366,6 +414,10 @@ export function SimulationProvider({ children }: PropsWithChildren) {
       isRunning: true,
       stallsEnabled: simulationState.stallsEnabled,
       forwardingEnabled: simulationState.forwardingEnabled,
+      // Inicializar los acumuladores
+      totalStallsInserted: 0,
+      instructionsWithLoadUseHazards: new Set<number>(),
+      instructionsWithRawHazards: new Set<number>(),
     });
   }, [resetSimulation, simulationState.stallsEnabled, simulationState.forwardingEnabled]);
 

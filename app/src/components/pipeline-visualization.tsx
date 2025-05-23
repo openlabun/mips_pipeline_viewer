@@ -103,6 +103,12 @@ export function PipelineVisualization() {
     stallsThisCycle,
     stallsEnabled,
     forwardingEnabled,
+    loadUseHazards,
+    rawHazards,
+    // Nuevos estados acumulativos
+    totalStallsInserted,
+    instructionsWithLoadUseHazards,
+    instructionsWithRawHazards
   } = useSimulationState();
 
   // Derivar el estado de si la simulación ha comenzado
@@ -223,10 +229,10 @@ export function PipelineVisualization() {
         </CardTitle>
       </CardHeader>
       <CardContent>
-        {/* Legend */}
+        {/* Legend - Actualizada para incluir diferentes tipos de hazards */}
         <div className="mb-4 flex flex-wrap gap-4 text-xs">
           <div className="flex items-center gap-1">
-            <div className="w-3 h-3 bg-accent rounded"></div>
+            <div className="w-3 h-3 bg-blue-500 rounded"></div>
             <span>Etapa Actual</span>
           </div>
           <div className="flex items-center gap-1">
@@ -236,6 +242,14 @@ export function PipelineVisualization() {
           <div className="flex items-center gap-1">
             <div className="w-3 h-3 bg-orange-200 rounded"></div>
             <span>Stall/Bubble</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <div className="w-3 h-3 bg-red-100 border border-red-400 rounded"></div>
+            <span>RAW Hazard</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <div className="w-3 h-3 bg-purple-100 border border-purple-400 rounded"></div>
+            <span>Load-Use Hazard</span>
           </div>
           {forwardingEnabled && (
             <div className="flex items-center gap-1">
@@ -275,13 +289,21 @@ export function PipelineVisualization() {
             <TableBody>
               {/* Instrucciones normales */}
               {instructions.map((inst, instIndex) => (
-                <TableRow key={`inst-${instIndex}`}>
+                <TableRow key={`inst-${instIndex}`} className="even:bg-muted/5">
                   <TableCell className="font-mono sticky left-0 bg-card z-10 border-r p-2">
                     <div className="space-y-1">
                       <div className="font-medium">{inst}</div>
                       <div className="text-xs text-muted-foreground">
                         Inst {instIndex + 1}
                       </div>
+                      {/* Indicador de tipo de instrucción */}
+                      {instructionStates.some(is => 
+                        is.index === instIndex && is.decoded.isLoad
+                      ) && (
+                        <Badge variant="outline" className="text-xs bg-blue-50 text-blue-600 mt-1 sm">
+                          LOAD
+                        </Badge>
+                      )}
                     </div>
                   </TableCell>
                   {cycleNumbers.map((c) => {
@@ -312,52 +334,84 @@ export function PipelineVisualization() {
                       isCurrentCycle
                     );
 
+                    // Verificar si esta instrucción tiene un hazard
+                    const hasLoadUseHazard = loadUseHazards.includes(instIndex) && isCurrentCycle && cellState.stage === 1;
+                    const hasRawHazard = rawHazards.includes(instIndex) && isCurrentCycle && cellState.stage === 1;
+
+                    // Estado específico para instrucción bloqueada por hazard
+                    const isBlockedByHazard = (hasLoadUseHazard || hasRawHazard) && isCurrentCycle;
+
+                    // Condición mejorada para determinar si la instrucción está activa en el ciclo actual
+                    const isActiveStage = isCurrentCycle && cellState.isActive;
+
                     return (
                       <TableCell
                         key={`inst-${instIndex}-cycle-${c}`}
                         className={cn(
-                          'text-center w-20 h-16 relative transition-all duration-500 border-l border-muted/20',
-                          // Coloreado basado en el estado real
+                          'text-center w-20 h-16 relative transition-all duration-300 border-l border-muted/20',
+                          // Coloreado basado en el estado real y tipo de hazard - orden ajustado para prioridad correcta
                           isFinished ? 'bg-background' :
-                          isActiveCycle && isRunning ? 'bg-accent text-accent-foreground animate-pulse-bg' :
-                          isActiveCycle ? 'bg-accent text-accent-foreground' :
+                          hasLoadUseHazard ? 'bg-purple-100 border border-purple-400 text-purple-900' :
+                          hasRawHazard ? 'bg-red-100 border border-red-400 text-red-900' :
+                          isActiveStage ? 'bg-blue-500 text-white shadow-sm' : // Estilo más visible para la etapa actual
                           isPastCycle ? 'bg-secondary/60 text-secondary-foreground' :
                           isFutureCycle ? 'bg-muted/30 text-muted-foreground' :
                           'bg-background',
+                          // Usar una animación personalizada en lugar de animate-pulse para todas las filas
+                          isActiveStage && isRunning && 'animate-[pulse_2s_ease-in-out_infinite]',
                           // Indicadores de forwarding
                           hasForwardingFrom && 'ring-2 ring-blue-400 ring-inset',
                           hasForwardingTo && 'ring-2 ring-green-400 ring-inset'
                         )}
+                        style={{
+                          // Asegurarse de que no haya problemas con la animación en filas pares
+                          animationDelay: isActiveStage && isRunning ? `${instIndex * 0.1}s` : '0s'
+                        }}
                       >
                         {currentStageData && !isFinished && (
                           <div className="flex flex-col items-center justify-center h-full relative">
                             <currentStageData.icon className={cn(
                               "w-5 h-5 mb-1",
-                              isFutureCycle && "opacity-40"
+                              isActiveStage && "text-white", // Asegurar que el icono sea visible en la etapa actual
+                              isFutureCycle && "opacity-40",
+                              isBlockedByHazard && "text-red-600"
                             )} aria-hidden="true" />
                             <span className={cn(
                               "text-xs font-medium",
-                              isFutureCycle && "opacity-40"
+                              isActiveStage && "text-white font-bold", // Texto más destacado en la etapa actual
+                              isFutureCycle && "opacity-40",
+                              isBlockedByHazard && "font-bold"
                             )}>
                               {currentStageData.name}
+                              {isActiveStage && <span className="ml-1">C{c}</span>} {/* Mostrar número de ciclo en la etapa activa */}
                             </span>
                             
-                            {/* Indicadores de forwarding */}
+                            {/* Indicadores de hazard */}
+                            {hasLoadUseHazard && (
+                              <div className="absolute top-0 left-0 w-full h-full flex items-center justify-center">
+                                <div className="absolute -top-1 -right-1 bg-purple-500 text-white text-xs px-1 py-0.5 rounded leading-none">
+                                  Load-Use
+                                </div>
+                              </div>
+                            )}
+                            
+                            {hasRawHazard && !hasLoadUseHazard && (
+                              <div className="absolute top-0 left-0 w-full h-full flex items-center justify-center">
+                                <div className="absolute -top-1 -right-1 bg-red-500 text-white text-xs px-1 py-0.5 rounded leading-none">
+                                  RAW
+                                </div>
+                              </div>
+                            )}
+                            
+                            {/* Indicadores de forwarding con mejor visibilidad */}
                             {hasForwardingFrom && (
-                              <div className="absolute -top-1 -right-1 bg-blue-500 text-white text-xs px-1 rounded-full leading-none">
+                              <div className="absolute -top-1 -right-1 bg-blue-500 text-white text-xs px-1 rounded-full leading-none shadow-sm">
                                 →
                               </div>
                             )}
                             {hasForwardingTo && (
-                              <div className="absolute -top-1 -left-1 bg-green-500 text-white text-xs px-1 rounded-full leading-none">
+                              <div className="absolute -top-1 -left-1 bg-green-500 text-white text-xs px-1 rounded-full leading-none shadow-sm">
                                 ←
-                              </div>
-                            )}
-                            
-                            {/* Mostrar número de ciclo para debugging si es necesario */}
-                            {isActiveCycle && stallsEnabled && (
-                              <div className="absolute bottom-0 right-0 text-xs opacity-50">
-                                C{c}
                               </div>
                             )}
                           </div>
@@ -393,7 +447,7 @@ export function PipelineVisualization() {
                     return (
                       <TableCell key={`stall-cycle-${c}`} className={cn(
                         'text-center w-20 h-16 border-l border-muted/20',
-                        cellState ? 'bg-orange-200 animate-pulse-bg' : 'bg-orange-50/20'
+                        cellState ? 'bg-orange-200' : 'bg-orange-50/20'
                       )}>
                         {cellState && (
                           <div className="flex flex-col items-center justify-center h-full">
@@ -413,35 +467,45 @@ export function PipelineVisualization() {
           </Table>
         </div>
 
-        {/* Información adicional sobre forwarding paths activos */}
-        {forwardingPaths.length > 0 && (
-          <div className="mt-4 p-3 bg-blue-50 rounded-md">
-            <h4 className="font-medium text-sm mb-2 flex items-center gap-2">
-              <Zap className="w-4 h-4 text-blue-600" />
-              Active Forwarding Paths (Cycle {currentCycle})
-            </h4>
-            <div className="space-y-1">
-              {forwardingPaths.map((path, idx) => (
-                <div key={idx} className="text-xs flex items-center gap-2">
-                  <span>Inst {path.from.instructionIndex + 1} ({STAGES[path.from.stage].name})</span>
-                  <ArrowRight className="w-3 h-3 text-blue-500" />
-                  <span>Inst {path.to.instructionIndex + 1} ({STAGES[path.to.stage].name})</span>
-                  <Badge variant="outline" className="text-xs">R{path.register}</Badge>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Estadísticas de hazards */}
+        {/* Estadísticas de hazards - Actualizado para mostrar tanto actuales como acumulados */}
         {(stallsEnabled || forwardingEnabled) && hasStarted && (
           <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
             <div className="p-3 bg-muted/50 rounded-md">
               <div className="font-medium">Hazards Detectados</div>
-              <div className="text-2xl font-bold text-orange-600">
-                {stallsThisCycle.length}
+              <div className="flex justify-between items-baseline">
+                <div className="text-2xl font-bold text-orange-600 flex items-baseline gap-2">
+                  {stallsThisCycle.length}
+                  <span className="text-xs text-muted-foreground">actuales</span>
+                </div>
+                <div className="text-xl font-medium text-orange-600 flex items-baseline gap-1">
+                  {totalStallsInserted}
+                  <span className="text-xs text-muted-foreground">total</span>
+                </div>
               </div>
-              <div className="text-xs text-muted-foreground">en este ciclo</div>
+              
+              <div className="flex items-center justify-between mt-2">
+                <div className="flex items-center gap-1">
+                  <div className="w-2 h-2 bg-purple-400 rounded-full"></div>
+                  <div className="text-xs text-purple-700">
+                    {loadUseHazards.length} <span className="opacity-75">actual</span>
+                  </div>
+                </div>
+                <div className="text-xs text-purple-700 font-medium">
+                  {instructionsWithLoadUseHazards.size} <span className="opacity-75">total Load-Use</span>
+                </div>
+              </div>
+              
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1">
+                  <div className="w-2 h-2 bg-red-400 rounded-full"></div>
+                  <div className="text-xs text-red-700">
+                    {rawHazards.length} <span className="opacity-75">actual</span>
+                  </div>
+                </div>
+                <div className="text-xs text-red-700 font-medium">
+                  {instructionsWithRawHazards.size} <span className="opacity-75">total RAW</span>
+                </div>
+              </div>
             </div>
             
             <div className="p-3 bg-muted/50 rounded-md">
@@ -450,6 +514,13 @@ export function PipelineVisualization() {
                 {forwardingPaths.length}
               </div>
               <div className="text-xs text-muted-foreground">paths actuales</div>
+              {stallsEnabled && (
+                <div className="text-xs text-green-600 mt-2">
+                  {forwardingPaths.length > 0 ? 
+                    `Evitando ${forwardingPaths.length} stalls en este ciclo` : 
+                    'Sin forwarding activo'}
+                </div>
+              )}
             </div>
             
             <div className="p-3 bg-muted/50 rounded-md">
@@ -458,6 +529,9 @@ export function PipelineVisualization() {
                 {Math.round((currentCycle / Math.max(maxCycles, 1)) * 100)}%
               </div>
               <div className="text-xs text-muted-foreground">completado</div>
+              <div className="text-xs mt-2">
+                Ciclo <span className="font-medium">{currentCycle}</span> de {maxCycles}
+              </div>
             </div>
           </div>
         )}

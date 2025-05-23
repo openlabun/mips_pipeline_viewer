@@ -95,6 +95,8 @@ export function InstructionInput({ onInstructionsSubmit, onReset, isRunning }: I
       '00422020', // add $a0, $v0, $v0    - Usa el resultado del load (hazard!)
       '00442820', // add $a1, $v0, $a0    - Otro uso del registro
       '20630001', // addi $v1, $v1, 1     - Instrucción independiente
+      '8C050004', // lw $a1, 4($zero)     - Otro load
+      '00A33022', // sub $a2, $a1, $v1    - Usa el resultado del segundo load
     ].join('\n');
     setInputText(sampleInstructions);
   };
@@ -246,11 +248,15 @@ export function InstructionInput({ onInstructionsSubmit, onReset, isRunning }: I
         {/* Instructions Help */}
         {!hasStarted && (
           <div className="text-xs text-muted-foreground space-y-1">
-            <p><strong>Ejemplos de hazards:</strong></p>
+            <p><strong>Tipos de hazards detectados:</strong></p>
             <ul className="space-y-0.5 ml-4">
-              <li>• <code>8C020000</code> seguido de <code>00422020</code> (load-use hazard)</li>
-              <li>• <code>00221020</code> seguido de <code>00442820</code> (RAW hazard normal)</li>
-              <li>• <code>20020005</code> seguido de <code>00422820</code> (puede usar forwarding)</li>
+              <li>• <span className="text-purple-600 font-medium">Load-Use:</span> Cuando se usa un valor cargado de memoria antes de que esté disponible</li>
+              <li>• <span className="text-red-600 font-medium">RAW (Read-After-Write):</span> Uso de un registro antes de que su valor esté actualizado</li>
+            </ul>
+            <p className="mt-1"><strong>Ejemplos:</strong></p>
+            <ul className="space-y-0.5 ml-4">
+              <li>• <code>8C020000</code> seguido de <code>00422020</code> (load-use hazard, requiere stall)</li>
+              <li>• <code>00221020</code> seguido de <code>00442820</code> (RAW hazard, puede usar forwarding)</li>
             </ul>
           </div>
         )}
