@@ -85,6 +85,21 @@ export function PipelineVisualization() {
                     const prevStageIndex = stageHistory?.[c - 1]?.[instIndex];
                     const isStall = stageIndex !== null && stageIndex === prevStageIndex && stageIndex !== undefined;
 
+                    // Nuevo: Detectar si es stall real (por dependencia)
+                    const isRealStall = isStall && stageIndex === 1 && stageHistory?.[c]?.[instIndex] === 1 && stageHistory?.[c - 1]?.[instIndex] === 1
+                      && (() => {
+                        // Busca si alguna instrucción anterior está en ID y stalleada
+                        for (let j = 0; j < instIndex; j++) {
+                          if (
+                            stageHistory?.[c]?.[j] === 1 && // anterior en ID
+                            stageHistory?.[c - 1]?.[j] === 1 // y estaba en ID antes
+                          ) {
+                            return false; // hay una anterior bloqueando, esto es "esperando"
+                          }
+                        }
+                        return true; // no hay anterior bloqueando, esto es un stall real
+                      })();
+
                     // ¿Es la etapa actual en el ciclo actual?
                     const isActualCurrentStage = stageIndex !== null && c === cycle;
 
@@ -107,7 +122,8 @@ export function PipelineVisualization() {
                           // 3. If it's the current stage but paused/stopped, highlight statically
                           shouldHighlightStatically ? 'bg-accent text-accent-foreground' :
                           // 4. Si hay un stall, usar color especial
-                          isStall ? 'bg-yellow-200' :
+                          isRealStall ? 'bg-red-400 text-white' : // Stall real (por dependencia)
+                          isStall ? 'bg-yellow-200' :             // Esperando (bloqueada por otra)
                           // 5. Si hay datos de etapa, usar fondo secundario
                           stageData ? 'bg-secondary text-secondary-foreground' :
                           // 6. De lo contrario (etapa futura o celda vacía), usar fondo por defecto
