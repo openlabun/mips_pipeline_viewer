@@ -52,11 +52,11 @@ export function InstructionInput({ onInstructionsSubmit, onReset, isRunning }: I
       return;
     }
 
-    const invalidInstructions = currentInstructions.filter(inst => !HEX_REGEX.test(inst));
+    /*const invalidInstructions = currentInstructions.filter(inst => !HEX_REGEX.test(inst)  && inst);
     if (invalidInstructions.length > 0) {
       setError(`Invalid instruction format found: ${invalidInstructions.join(', ')}. Each instruction must be 8 hexadecimal characters.`);
       return;
-    }
+    }*/
 
     onInstructionsSubmit(currentInstructions);
   };
