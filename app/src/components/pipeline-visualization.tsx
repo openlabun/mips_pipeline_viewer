@@ -33,11 +33,15 @@ export function PipelineVisualization() {
     isRunning,
     instructionStages, // Use the pre-calculated stages
     isFinished, // Use the finished flag from context
+    stageHistory,
   } = useSimulationState();
 
-
-  // Use maxCycles for the number of columns if it's calculated, otherwise 0
-  const totalCyclesToDisplay = maxCycles > 0 ? maxCycles : 0;
+  // Calculate the last cycle based on stage history or fallback to maxCycles
+  const lastCycle = Math.max(
+    ...Object.keys(stageHistory || {}).map(Number),
+    maxCycles // fallback
+  );
+  const totalCyclesToDisplay = lastCycle > 0 ? lastCycle : 0;
   const cycleNumbers = Array.from({ length: totalCyclesToDisplay }, (_, i) => i + 1);
 
   // if (instructions.length === 0) return null; // Handled in page.tsx
@@ -73,21 +77,23 @@ export function PipelineVisualization() {
                     // Determine the stage for this instruction *at this cycle column 'c'*
                     // Instruction 'instIndex' entered stage 's' at cycle 'instIndex + s + 1'
                     // So, at cycle 'c', the stage index is 'c - instIndex - 1'
-                    const expectedStageIndex = c - instIndex - 1;
-                    const currentStageIndex = instructionStages[instIndex]; // Get the actual stage from context for the *current* cycle
+                    
+                    const stageIndex = stageHistory?.[c]?.[instIndex];
+                    const stageData = stageIndex !== null && stageIndex !== undefined ? STAGES[stageIndex] : null;
 
-                    const isInPipelineAtThisCycle = expectedStageIndex >= 0 && expectedStageIndex < STAGES.length;
-                    const currentStageData = isInPipelineAtThisCycle ? STAGES[expectedStageIndex] : null;
+                    // Detecta si la instrucción está en la misma etapa que el ciclo anterior (stall visual)
+                    const prevStageIndex = stageHistory?.[c - 1]?.[instIndex];
+                    const isStall = stageIndex !== null && stageIndex === prevStageIndex && stageIndex !== undefined;
 
-                    // Is this cell representing the instruction's *actual* current stage in the *current* simulation cycle?
-                    const isActualCurrentStage = currentStageIndex !== null && expectedStageIndex === currentStageIndex && c === cycle;
+                    // ¿Es la etapa actual en el ciclo actual?
+                    const isActualCurrentStage = stageIndex !== null && c === cycle;
 
-                     // Only animate if the simulation is running AND not yet completed
-                     const shouldAnimate = isActualCurrentStage && isRunning && !isFinished;
-                     // Highlight statically if it's the current stage but paused/stopped (and not completed)
-                     const shouldHighlightStatically = isActualCurrentStage && !isRunning && !isFinished;
-                     // Mark past stages
-                     const isPastStage = isInPipelineAtThisCycle && c < cycle;
+                    // Animar solo la celda actual
+                    const shouldAnimate = isActualCurrentStage && isRunning && !isFinished;
+                    const shouldHighlightStatically = isActualCurrentStage && !isRunning && !isFinished;
+
+                    // Mark past stages
+                   // const isPastStage = isInPipelineAtThisCycle && c < cycle;
 
                     return (
                       <TableCell
@@ -100,17 +106,19 @@ export function PipelineVisualization() {
                           shouldAnimate ? 'bg-accent text-accent-foreground animate-pulse-bg' :
                           // 3. If it's the current stage but paused/stopped, highlight statically
                           shouldHighlightStatically ? 'bg-accent text-accent-foreground' :
-                          // 4. If it's a past stage in the pipeline (and not current/finished), use secondary
-                          isPastStage ? 'bg-secondary text-secondary-foreground' :
-                          // 5. Otherwise (future stage or empty cell), use default background
+                          // 4. Si hay un stall, usar color especial
+                          isStall ? 'bg-yellow-200' :
+                          // 5. Si hay datos de etapa, usar fondo secundario
+                          stageData ? 'bg-secondary text-secondary-foreground' :
+                          // 6. De lo contrario (etapa futura o celda vacía), usar fondo por defecto
                           'bg-background'
                         )}
                       >
                         {/* Show icon/name if the stage should be active in this cycle column AND simulation is not completed */}
-                        {currentStageData && !isFinished && (
+                        {stageData && !isFinished && (
                            <div className="flex flex-col items-center justify-center">
-                             <currentStageData.icon className="w-4 h-4 mb-1" aria-hidden="true" />
-                             <span className="text-xs">{currentStageData.name}</span>
+                             <stageData.icon className="w-4 h-4 mb-1" aria-hidden="true" />
+                             <span className="text-xs">{stageData.name}</span>
                            </div>
                          )}
                       </TableCell>
