@@ -11,11 +11,26 @@ import {
   TableCell,
   TableCaption,
 } from "@/components/ui/table";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Download, Code2, Cpu, MemoryStick, CheckSquare, CornerDownLeft, AlertTriangle, ArrowRight } from "lucide-react";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+} from "@/components/ui/card";
+import {
+  Download,
+  Code2,
+  Cpu,
+  MemoryStick,
+  CheckSquare,
+  CornerDownLeft,
+  AlertTriangle,
+  ArrowRight,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useSimulationState } from "@/context/SimulationContext";
-import { 
+import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
@@ -31,20 +46,24 @@ function decodeRegisterInfo(hex: string): string {
     const instr = parseInt(hex, 16);
     const opcode = (instr >>> 26) & 0x3f;
 
-    if (opcode === 0x00) { // Tipo R
+    if (opcode === 0x00) {
+      // Tipo R
       const rs = (instr >>> 21) & 0x1f;
       const rt = (instr >>> 16) & 0x1f;
       const rd = (instr >>> 11) & 0x1f;
       return `rs:$${rs}, rt:$${rt}, rd:$${rd}`;
-    } else if (opcode === 0x23) { // lw
+    } else if (opcode === 0x23) {
+      // lw
       const rs = (instr >>> 21) & 0x1f;
       const rt = (instr >>> 16) & 0x1f;
       return `rs:$${rs}, rt:$${rt} (destino)`;
-    } else if (opcode === 0x2b) { // sw
+    } else if (opcode === 0x2b) {
+      // sw
       const rs = (instr >>> 21) & 0x1f;
       const rt = (instr >>> 16) & 0x1f;
       return `rs:$${rs}, rt:$${rt} (datos)`;
-    } else { // Otros I-type
+    } else {
+      // Otros I-type
       const rs = (instr >>> 21) & 0x1f;
       const rt = (instr >>> 16) & 0x1f;
       return `rs:$${rs}, rt:$${rt} (destino)`;
@@ -59,28 +78,31 @@ function getInstructionDescription(hex: string): string {
   try {
     const instr = parseInt(hex, 16);
     const opcode = (instr >>> 26) & 0x3f;
-    
-    if (opcode === 0x00) { // Tipo R
+
+    if (opcode === 0x00) {
+      // Tipo R
       const funct = instr & 0x3f;
       const rs = (instr >>> 21) & 0x1f;
       const rt = (instr >>> 16) & 0x1f;
       const rd = (instr >>> 11) & 0x1f;
-      
+
       if (funct === 0x20) return `add $${rd}, $${rs}, $${rt}`;
       if (funct === 0x22) return `sub $${rd}, $${rs}, $${rt}`;
       return "Instrucción tipo R";
-    } else if (opcode === 0x23) { // lw
+    } else if (opcode === 0x23) {
+      // lw
       const rs = (instr >>> 21) & 0x1f;
       const rt = (instr >>> 16) & 0x1f;
       const offset = instr & 0xffff;
       return `lw $${rt}, ${offset}($${rs})`;
-    } else if (opcode === 0x2b) { // sw
+    } else if (opcode === 0x2b) {
+      // sw
       const rs = (instr >>> 21) & 0x1f;
       const rt = (instr >>> 16) & 0x1f;
       const offset = instr & 0xffff;
       return `sw $${rt}, ${offset}($${rs})`;
     }
-    
+
     return "Instrucción MIPS";
   } catch {
     return "Instrucción desconocida";
@@ -106,7 +128,7 @@ export function PipelineVisualization() {
     mode,
     forwardingPaths,
   } = useSimulationState();
-  
+
   const [showHelp, setShowHelp] = useState(false);
 
   const totalCycles = Math.max(maxCycles, 0);
@@ -117,7 +139,7 @@ export function PipelineVisualization() {
     if (
       mode !== "stall" ||
       i === 0 ||
-      !isRunning ||
+      //!isRunning ||
       isFinished ||
       instructionStages[i] !== 1 || // curr en ID
       instructionStages[i - 1] !== 2 // prev en EX
@@ -144,21 +166,21 @@ export function PipelineVisualization() {
           rt: (instr >>> 16) & 0x1f,
         };
       };
-    
+
       const p = decode(prevHex);
       const c = decode(currHex);
-    
+
       let prevDst: number | null = null;
       if (p.type === "R") prevDst = p.rd;
       else if (p.op === 0x23) prevDst = p.rt; // lw
       else if (p.op !== 0x2b) prevDst = p.rt; // I-tipo salvo sw
-    
+
       const currSrc: number[] = [];
       if (c.type === "R") currSrc.push(c.rs, c.rt);
       else if (c.op === 0x23) currSrc.push(c.rs); // lw
       else if (c.op === 0x2b) currSrc.push(c.rs, c.rt); // sw
       else currSrc.push(c.rs);
-    
+
       return prevDst !== null && currSrc.includes(prevDst);
     };
 
@@ -166,9 +188,9 @@ export function PipelineVisualization() {
   });
 
   const stallDetected = stalls.some((s) => s !== null);
-  
+
   // Obtener forwarding activos para el ciclo actual
-  const currentForwardings = forwardingPaths.filter(fw => fw.cycle === cycle);
+  const currentForwardings = forwardingPaths.filter((fw) => fw.cycle === cycle);
   const hasForwarding = currentForwardings.length > 0;
 
   return (
@@ -177,12 +199,13 @@ export function PipelineVisualization() {
         <div>
           <CardTitle>Visualización del Pipeline</CardTitle>
           <CardDescription>
-            Diagrama que muestra cómo fluyen las instrucciones por las etapas del pipeline
+            Diagrama que muestra cómo fluyen las instrucciones por las etapas
+            del pipeline
           </CardDescription>
         </div>
-        <Button 
-          variant="outline" 
-          size="sm" 
+        <Button
+          variant="outline"
+          size="sm"
           onClick={() => setShowHelp(!showHelp)}
         >
           {showHelp ? "Ocultar ayuda" : "Mostrar ayuda"}
@@ -192,20 +215,24 @@ export function PipelineVisualization() {
         {showHelp && (
           <div className="mb-6 p-4 bg-muted/50 rounded-md">
             <h3 className="font-medium mb-2">Guía de visualización:</h3>
-            
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <h4 className="font-medium mb-1 text-sm">Etapas del pipeline:</h4>
+                <h4 className="font-medium mb-1 text-sm">
+                  Etapas del pipeline:
+                </h4>
                 <ul className="space-y-1">
                   {STAGES.map((stage, i) => (
                     <li key={i} className="flex items-center text-sm">
                       <stage.icon className="w-4 h-4 mr-1" />
-                      <span className="font-mono mr-1">{stage.name}</span> - {stage.description}
+                      <span className="font-mono mr-1">
+                        {stage.name}
+                      </span> - {stage.description}
                     </li>
                   ))}
                 </ul>
               </div>
-              
+
               <div>
                 <h4 className="font-medium mb-1 text-sm">Colores:</h4>
                 <ul className="space-y-2">
@@ -236,7 +263,10 @@ export function PipelineVisualization() {
             <AlertTriangle className="h-5 w-5 mr-2 flex-shrink-0" />
             <div>
               <p className="font-medium">Stall detectado en ciclo {cycle}</p>
-              <p className="text-sm">Una instrucción necesita datos que aún no están disponibles. El pipeline se detiene temporalmente.</p>
+              <p className="text-sm">
+                Una instrucción necesita datos que aún no están disponibles. El
+                pipeline se detiene temporalmente.
+              </p>
             </div>
           </div>
         )}
@@ -245,12 +275,15 @@ export function PipelineVisualization() {
           <div className="mb-4 p-4 bg-green-100/80 border border-green-200 text-green-800 rounded-md">
             <div className="flex items-center mb-2">
               <ArrowRight className="h-5 w-5 mr-2" />
-              <h3 className="font-medium">Forwarding activo en ciclo {cycle}</h3>
+              <h3 className="font-medium">
+                Forwarding activo en ciclo {cycle}
+              </h3>
             </div>
             <ul className="space-y-1 pl-7">
               {currentForwardings.map((fw, idx) => (
                 <li key={idx} className="text-sm list-disc">
-                  De instrucción {fw.from + 1} ({fw.source}) a instrucción {fw.to + 1} (registro {fw.target})
+                  De instrucción {fw.from + 1} ({fw.source}) a instrucción{" "}
+                  {fw.to + 1} (registro {fw.target})
                 </li>
               ))}
             </ul>
@@ -271,8 +304,8 @@ export function PipelineVisualization() {
                   Instrucción
                 </TableHead>
                 {cycleNums.map((c) => (
-                  <TableHead 
-                    key={`cycle-${c}`} 
+                  <TableHead
+                    key={`cycle-${c}`}
                     className={cn(
                       "text-center w-16",
                       c === cycle && "bg-accent/20 font-medium"
@@ -302,7 +335,9 @@ export function PipelineVisualization() {
                         </TableCell>
                       </TooltipTrigger>
                       <TooltipContent side="right">
-                        <p className="font-medium">{getInstructionDescription(inst)}</p>
+                        <p className="font-medium">
+                          {getInstructionDescription(inst)}
+                        </p>
                       </TooltipContent>
                     </Tooltip>
                   </TooltipProvider>
@@ -323,13 +358,17 @@ export function PipelineVisualization() {
                       stalls.includes(i) && currStage === 1 && c >= cycle;
 
                     // Forwarding activo para esta instrucción y ciclo
-                    const isForwardTarget = mode === "forwarding" && forwardingPaths.some(
-                      fw => fw.to === i && fw.cycle === c
-                    );
+                    const isForwardTarget =
+                      mode === "forwarding" &&
+                      forwardingPaths.some(
+                        (fw) => fw.to === i && fw.cycle === c
+                      );
 
-                    const isForwardSource = mode === "forwarding" && forwardingPaths.some(
-                      fw => fw.from === i && fw.cycle === c
-                    );
+                    const isForwardSource =
+                      mode === "forwarding" &&
+                      forwardingPaths.some(
+                        (fw) => fw.from === i && fw.cycle === c
+                      );
 
                     const animate = isCurr && isRunning && !isFinished;
                     const highlight = isCurr && !isRunning && !isFinished;
@@ -354,7 +393,9 @@ export function PipelineVisualization() {
                             ? "bg-blue-500 text-white"
                             : past
                             ? "bg-secondary text-secondary-foreground"
-                            : c === cycle ? "bg-accent/10" : "bg-background"
+                            : c === cycle
+                            ? "bg-accent/10"
+                            : "bg-background"
                         )}
                       >
                         <TooltipProvider>
@@ -364,7 +405,9 @@ export function PipelineVisualization() {
                                 {stageData && !isFinished && (
                                   <>
                                     <stageData.icon className="w-4 h-4 mb-1" />
-                                    <span className="text-xs">{stageData.name}</span>
+                                    <span className="text-xs">
+                                      {stageData.name}
+                                    </span>
                                   </>
                                 )}
                                 {stalled && (
