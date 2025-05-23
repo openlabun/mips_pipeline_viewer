@@ -33,6 +33,7 @@ export function PipelineVisualization() {
     isRunning,
     instructionStages, // Use the pre-calculated stages
     isFinished, // Use the finished flag from context
+    instructionFinished
   } = useSimulationState();
 
 
@@ -87,7 +88,12 @@ export function PipelineVisualization() {
                      // Highlight statically if it's the current stage but paused/stopped (and not completed)
                      const shouldHighlightStatically = isActualCurrentStage && !isRunning && !isFinished;
                      // Mark past stages
-                     const isPastStage = isInPipelineAtThisCycle && c < cycle;
+                     const isFinishedInst = instructionFinished[instIndex]; // check if the current instruction is finished or not
+                     const isPastStage = (c - (instIndex + 1)) < (currentStageIndex === null ? (isFinishedInst ? Infinity : -1) : currentStageIndex) && currentStageData;
+
+                     if (currentStageData && instIndex === 0 && currentStageData.name === "ID") {
+                      console.log(c);
+                     }
 
                     return (
                       <TableCell

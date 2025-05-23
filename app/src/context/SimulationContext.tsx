@@ -18,6 +18,7 @@ interface SimulationState {
   // Map instruction index to its current stage index (0-based) or null if not started/finished
   instructionStages: Record<number, number | null>;
   isFinished: boolean; // Track if simulation completed
+  instructionFinished: Record<number, boolean>
 }
 
 // Define the shape of the context actions
@@ -41,6 +42,7 @@ const initialState: SimulationState = {
   isRunning: false,
   stageCount: DEFAULT_STAGE_COUNT,
   instructionStages: {},
+  instructionFinished: {},
   isFinished: false,
 };
 
@@ -64,6 +66,7 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
       newInstructionStages[index] = stageIndex;
       activeInstructions++; // Count instructions currently in the pipeline
     } else {
+      if (stageIndex >= currentState.stageCount) currentState.instructionFinished[index] = true;
       newInstructionStages[index] = null; // Not in pipeline (either hasn't started or has finished)
     }
   });
@@ -98,6 +101,10 @@ export function SimulationProvider({ children }: PropsWithChildren) {
     }
   };
 
+  /*React.useEffect(()=> {
+    console.log(simulationState.instructionStages);
+  }, [simulationState.instructionStages])*/
+
   const runClock = React.useCallback(() => {
     clearTimer(); // Clear any existing timer
     if (!simulationState.isRunning || simulationState.isFinished) return; // Don't start timer if not running or finished
@@ -129,6 +136,7 @@ export function SimulationProvider({ children }: PropsWithChildren) {
 
     const calculatedMaxCycles = submittedInstructions.length + DEFAULT_STAGE_COUNT - 1;
     const initialStages: Record<number, number | null> = {};
+    const initialFinishedStages: Record<number, boolean> = {};
     // Initialize stages for cycle 1
     submittedInstructions.forEach((_, index) => {
         const stageIndex = 1 - index - 1; // Calculate stage for cycle 1
@@ -137,6 +145,7 @@ export function SimulationProvider({ children }: PropsWithChildren) {
         } else {
             initialStages[index] = null;
         }
+        initialFinishedStages[index] = false;
     });
 
 
@@ -148,6 +157,7 @@ export function SimulationProvider({ children }: PropsWithChildren) {
       stageCount: DEFAULT_STAGE_COUNT,
       instructionStages: initialStages, // Set initial stages for cycle 1
       isFinished: false,
+      instructionFinished: initialFinishedStages
     });
     // runClock will be triggered by the useEffect below when isRunning becomes true
   }, [resetSimulation]);
