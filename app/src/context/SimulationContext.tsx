@@ -44,7 +44,7 @@ const SimulationActionsContext = React.createContext<SimulationActions | undefin
 
 const DEFAULT_STAGE_COUNT = STAGE_NAMES.length; // Use length of defined stages
 
-// Función corregida para calcular los ciclos máximos
+//  Max Cycles Calculation
 const calculateMaxCycles = (instructions: string[], mode: SimulationMode, decoded: decodedInstruction[]): number => {
   const baseCycles = instructions.length + DEFAULT_STAGE_COUNT - 1;
   if (mode === 'default') return baseCycles;
@@ -67,7 +67,7 @@ const calculateMaxCycles = (instructions: string[], mode: SimulationMode, decode
       prevDest = prevInstr.rd;
     } else if (prevInstr.format === 'I') {
       prevDest = prevInstr.rt;
-      isLoad = prevInstr.opcode === 35; // lw opcode
+      isLoad = prevInstr.opcode === 35; 
     }
 
     // Obtener los registros fuente de la instrucción actual
@@ -91,7 +91,7 @@ const calculateMaxCycles = (instructions: string[], mode: SimulationMode, decode
     }
   }
 
-  console.log(`Modo: ${mode}, Instrucciones: ${instructions.length}, Ciclos base: ${baseCycles}, Stalls totales: ${totalStalls}, Ciclos máximos: ${baseCycles + totalStalls}`);
+  // console.log(`Modo: ${mode}, Instrucciones: ${instructions.length}, Ciclos base: ${baseCycles}, Stalls totales: ${totalStalls}, Ciclos máximos: ${baseCycles + totalStalls}`);
   return baseCycles + totalStalls;
 };
 
@@ -104,7 +104,7 @@ const initialState: SimulationState = {
   stageCount: DEFAULT_STAGE_COUNT,
   instructionStages: {},
   isFinished: false,
-  mode: 'default',  // <-- NUEVA PROP
+  mode: 'default',
   stageHistory: {},
 };
 
@@ -158,7 +158,7 @@ function calculateStallNextState(currentState: SimulationState): SimulationState
   const nextCycle = currentState.currentCycle + 1;
   const newInstructionStages: Record<number, number | null> = {};
   let exOccupied = false;
-  let idBlocked = false; // Nueva bandera para bloquear ID
+  let idBlocked = false;
 
   function hasRAWDependency(currIdx: number): boolean {
     const currInstr = currentState.decodedInstructions[currIdx];
@@ -184,9 +184,7 @@ function calculateStallNextState(currentState: SimulationState): SimulationState
         currSources.includes(prevDest) &&
         [2, 3, 4].includes(prevStage) // EX, MEM, WB
       ) {
-        console.log(
-          `Stall detectado: instr ${currIdx} (ID) depende de instr ${prevIdx} (stage ${prevStage})`
-        );
+        // console.log(`Stall detectado: instr ${currIdx} (ID) depende de instr ${prevIdx} (stage ${prevStage})`);
         return true;
       }
     }
@@ -223,7 +221,7 @@ function calculateStallNextState(currentState: SimulationState): SimulationState
   const allInstructionsFinished = Object.values(newInstructionStages).every(stage => stage === null);
   const isFinished = allInstructionsFinished;
   const isRunning = !isFinished;
-  console.log(`Ciclo ${nextCycle}:`, newInstructionStages);
+  
   
   return {
     ...currentState,
@@ -255,7 +253,7 @@ function calculateForwardNextState(currentState: SimulationState): SimulationSta
       if (prevInstr.format === 'R') prevDest = prevInstr.rd;
       if (prevInstr.format === 'I') {
         prevDest = prevInstr.rt;
-        isLoad = prevInstr.opcode === 35; // lw opcode
+        isLoad = prevInstr.opcode === 35; 
       }
 
       const currSources = [currInstr.rs, currInstr.rt].filter(x => x !== undefined);
@@ -266,16 +264,12 @@ function calculateForwardNextState(currentState: SimulationState): SimulationSta
       ) {
         // Si la previa es load y está en EX o MEM, stall
         if (isLoad && [2, 3].includes(prevStage)) {
-          console.log(
-            `Stall (forwarding): instr ${currIdx} (ID) depende de LOAD instr ${prevIdx} (stage ${prevStage})`
-          );
+          // console.log(`Stall (forwarding): instr ${currIdx} (ID) depende de LOAD instr ${prevIdx} (stage ${prevStage})`);
           return true;
         }
         // Si la previa es ALU y está en EX, stall
         if (!isLoad && prevStage === 2) {
-          console.log(
-            `Stall (forwarding): instr ${currIdx} (ID) depende de ALU instr ${prevIdx} (stage ${prevStage})`
-          );
+          // console.log(`Stall (forwarding): instr ${currIdx} (ID) depende de ALU instr ${prevIdx} (stage ${prevStage})` );
           return true;
         }
       }
@@ -313,7 +307,7 @@ function calculateForwardNextState(currentState: SimulationState): SimulationSta
   const allInstructionsFinished = Object.values(newInstructionStages).every(stage => stage === null);
   const isFinished = allInstructionsFinished;
   const isRunning = !isFinished;
-  console.log(`Ciclo ${nextCycle} (forwarding):`, newInstructionStages);
+  // console.log(`Ciclo ${nextCycle} (forwarding):`, newInstructionStages);
   
   return {
     ...currentState,
