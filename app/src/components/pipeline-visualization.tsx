@@ -79,7 +79,6 @@ export function PipelineVisualization() {
                     const shouldHighlightStatically = isActualCurrentStage && !isRunning && !isFinished;
                     const isPastStage = isInPipelineAtThisCycle && c < cycle;
 
-                    // --- NUEVO: lógica para STALL ---
                     let cellContent = null;
                     if (inst === "STALL" && currentStageData) {
                       cellContent = (
@@ -97,7 +96,7 @@ export function PipelineVisualization() {
                           )}
                         </div>
                       );
-                    } else if (currentStageData && !isFinished) {
+                    } else if (currentStageData) {
                       cellContent = (
                         <div className="flex flex-col items-center justify-center">
                           <currentStageData.icon className="w-4 h-4 mb-1" aria-hidden="true" />
@@ -105,7 +104,6 @@ export function PipelineVisualization() {
                         </div>
                       );
                     }
-                    // --- FIN NUEVO ---
 
                     return (
                       <TableCell
