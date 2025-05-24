@@ -1,4 +1,3 @@
-// src/components/pipeline-visualization.tsx
 "use client";
 
 import type * as React from "react";
@@ -14,7 +13,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Download, Code2, Cpu, MemoryStick, CheckSquare } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useSimulationState } from "@/context/SimulationContext"; // Import context hook
+import { useSimulationState } from "@/context/SimulationContext";
 
 const STAGES = [
   { name: "IF", icon: Download },
@@ -25,35 +24,20 @@ const STAGES = [
 ] as const;
 
 export function PipelineVisualization() {
-  // Get state from context
   const {
     instructions,
     currentCycle: cycle,
-    maxCycles, // Max cycles determines the number of columns
+    maxCycles,
     isRunning,
-    instructionStages, // Use the pre-calculated stages
-    isFinished, // Use the finished flag from context
-    forwardingPaths = [],
+    instructionStages,
+    isFinished,
   } = useSimulationState();
 
-  // Use maxCycles for the number of columns if it's calculated, otherwise 0
   const totalCyclesToDisplay = maxCycles > 0 ? maxCycles : 0;
   const cycleNumbers = Array.from(
     { length: totalCyclesToDisplay },
     (_, i) => i + 1
   );
-
-  const isForwardingCell = (
-    instIndex: number,
-    stageName: string,
-    cycle: number
-  ): boolean => {
-    return forwardingPaths.some(
-      (f) =>
-        (f.toIndex === instIndex && f.stage === stageName) ||
-        (f.fromIndex === instIndex && f.stage === stageName)
-    );
-  };
 
   return (
     <Card className="w-full overflow-hidden">
@@ -66,7 +50,6 @@ export function PipelineVisualization() {
             <TableCaption>MIPS instruction pipeline visualization</TableCaption>
             <TableHeader>
               <TableRow>
-                {/* Use bg-card for sticky header cell background */}
                 <TableHead className="w-[150px] sticky left-0 bg-card z-10 border-r">
                   Instruction
                 </TableHead>
@@ -78,88 +61,91 @@ export function PipelineVisualization() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {instructions.map((inst, instIndex) => (
-                <TableRow key={`inst-${instIndex}`}>
-                  <TableCell
-                    className={cn(
-                      "font-mono sticky left-0 z-10 border-r",
-                      inst === "STALL"
-                        ? "bg-red-200 text-red-800 font-bold"
-                        : "bg-card"
-                    )}
-                  >
-                    {inst}
-                  </TableCell>
-                  {cycleNumbers.map((c) => {
-                    const expectedStageIndex = c - instIndex - 1;
-                    const currentStageIndex = instructionStages[instIndex];
+              {instructions.map((inst, instIndex) => {
+                const stageInfo = instructionStages[instIndex];
+                return (
+                  <TableRow key={`inst-${instIndex}`}>
+                    <TableCell
+                      className={cn(
+                        "font-mono sticky left-0 z-10 border-r",
+                        inst === "STALL"
+                          ? "bg-red-200 text-red-800 font-bold"
+                          : "bg-card"
+                      )}
+                    >
+                      {inst}
+                    </TableCell>
+                    {cycleNumbers.map((c) => {
+                      const expectedStageIndex = c - instIndex - 1;
+                      const currentStageData =
+                        expectedStageIndex >= 0 &&
+                        expectedStageIndex < STAGES.length
+                          ? STAGES[expectedStageIndex]
+                          : null;
 
-                    const isInPipelineAtThisCycle =
-                      expectedStageIndex >= 0 &&
-                      expectedStageIndex < STAGES.length;
-                    const currentStageData = isInPipelineAtThisCycle
-                      ? STAGES[expectedStageIndex]
-                      : null;
+                      const isActualCurrentStage =
+                        stageInfo?.stageIndex !== null &&
+                        expectedStageIndex === stageInfo?.stageIndex &&
+                        c === cycle;
 
-                    const isActualCurrentStage =
-                      currentStageIndex !== null &&
-                      expectedStageIndex === currentStageIndex &&
-                      c === cycle;
+                      const shouldAnimate =
+                        isActualCurrentStage && isRunning && !isFinished;
 
-                    const shouldAnimate =
-                      isActualCurrentStage && isRunning && !isFinished;
-                    const shouldHighlightStatically =
-                      isActualCurrentStage && !isRunning && !isFinished;
-                    const isPastStage = isInPipelineAtThisCycle && c < cycle;
+                      const shouldHighlightStatically =
+                        isActualCurrentStage && !isRunning && !isFinished;
 
-                    const isForward =
-                      currentStageData &&
-                      isForwardingCell(instIndex, currentStageData.name, c);
+                      const isPastStage =
+                        expectedStageIndex >= 0 &&
+                        expectedStageIndex < STAGES.length &&
+                        c < cycle;
 
-                    return (
-                      <TableCell
-                        key={`inst-${instIndex}-cycle-${c}`}
-                        className={cn(
-                          "text-center w-16 h-14 transition-colors duration-300",
-                          inst === "STALL"
-                            ? isInPipelineAtThisCycle
-                              ? isFinished
-                                ? "bg-background"
-                                : isActualCurrentStage
-                                ? "bg-red-300 text-red-900 animate-pulse-bg"
-                                : isPastStage
-                                ? "bg-red-200 text-red-800"
+                      const isForward =
+                        stageInfo?.isForwarding &&
+                        expectedStageIndex === stageInfo?.stageIndex;
+
+                      return (
+                        <TableCell
+                          key={`inst-${instIndex}-cycle-${c}`}
+                          className={cn(
+                            "text-center w-16 h-14 transition-colors duration-300",
+                            inst === "STALL"
+                              ? expectedStageIndex >= 0 &&
+                                expectedStageIndex < STAGES.length
+                                ? isFinished
+                                  ? "bg-background"
+                                  : isActualCurrentStage
+                                  ? "bg-red-300 text-red-900 animate-pulse-bg"
+                                  : isPastStage
+                                  ? "bg-red-200 text-red-800"
+                                  : "bg-background"
                                 : "bg-background"
+                              : isFinished
+                              ? "bg-background"
+                              : isForward
+                              ? "bg-yellow-300 text-yellow-900"
+                              : shouldAnimate
+                              ? "bg-accent text-accent-foreground animate-pulse-bg"
+                              : shouldHighlightStatically
+                              ? "bg-accent text-accent-foreground"
+                              : isPastStage
+                              ? "bg-secondary text-secondary-foreground"
                               : "bg-background"
-                            : isFinished
-                            ? "bg-background"
-                            : isForward
-                            ? "bg-yellow-300 text-yellow-900"
-                            : shouldAnimate
-                            ? "bg-accent text-accent-foreground animate-pulse-bg"
-                            : shouldHighlightStatically
-                            ? "bg-accent text-accent-foreground"
-                            : isPastStage
-                            ? "bg-secondary text-secondary-foreground"
-                            : "bg-background"
-                        )}
-                      >
-                        {currentStageData && !isFinished && (
-                          <div className="flex flex-col items-center justify-center">
-                            <currentStageData.icon
-                              className="w-4 h-4 mb-1"
-                              aria-hidden="true"
-                            />
-                            <span className="text-xs">
-                              {currentStageData.name}
-                            </span>
-                          </div>
-                        )}
-                      </TableCell>
-                    );
-                  })}
-                </TableRow>
-              ))}
+                          )}
+                        >
+                          {currentStageData && !isFinished && (
+                            <div className="flex flex-col items-center justify-center">
+                              <currentStageData.icon className="w-4 h-4 mb-1" />
+                              <span className="text-xs">
+                                {currentStageData.name}
+                              </span>
+                            </div>
+                          )}
+                        </TableCell>
+                      );
+                    })}
+                  </TableRow>
+                );
+              })}
             </TableBody>
           </Table>
         </div>

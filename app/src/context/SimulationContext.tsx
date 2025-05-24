@@ -16,9 +16,12 @@ interface SimulationState {
   isRunning: boolean;
   stageCount: number;
   // Map instruction index to its current stage index (0-based) or null if not started/finished
-  instructionStages: Record<number, number | null>;
+  instructionStages: Record<
+    number,
+    { stageIndex: number | null; isForwarding?: boolean }
+  >;
   isFinished: boolean; // Track if simulation completed
-  forwardingPaths?: { fromIndex: number; toIndex: number; stage: string }[];
+  forwardingPaths?: { toIndex: number; stage: string }[];
 }
 
 // Define the shape of the context actions
@@ -46,9 +49,6 @@ const SimulationActionsContext = React.createContext<
 >(undefined);
 
 const DEFAULT_STAGE_COUNT = STAGE_NAMES.length; // Use length of defined stages
-let sw: number = 0; // Valida si una instruccion es store o load para la deteccion de hazards
-let lw: number = 0;
-let fw: number = 0; //Valida si se debe insertar un stall (0) o no porque se hara un forward (1)
 const initialState: SimulationState = {
   instructions: [],
   currentCycle: 0,
@@ -61,13 +61,23 @@ const initialState: SimulationState = {
 };
 
 // Function to calculate the next state based on the current state
+type InstructionStageInfo = {
+  stageIndex: number | null;
+  isForwarding?: boolean;
+};
+
+let numero = 0;
+
 const calculateNextState = (currentState: SimulationState): SimulationState => {
+  numero++;
+  console.log("contador: ", numero);
+
   if (!currentState.isRunning || currentState.isFinished) {
     return currentState;
   }
 
   const nextCycle = currentState.currentCycle + 1;
-  const newInstructionStages: Record<number, number | null> = {};
+  const newInstructionStages: Record<number, InstructionStageInfo> = {};
   let newInstructions = [...currentState.instructions];
   let insertedStall = false;
 
@@ -102,114 +112,193 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
     instrIF: DecodedInstruction,
     instrID: DecodedInstruction
   ): boolean => {
-    const sw = instrIF.opcode === "101011" ? 1 : 0;
-    const lw = instrID.opcode === "100011" ? 1 : 0;
-
-    if (instrIF.type === "R") {
-      if (instrID.type === "R") {
-        if (instrIF.rs === instrID.rd || instrIF.rt === instrID.rd) return true;
-        if (
-          (lw === 1 && instrIF.rs === instrID.rt) ||
-          instrIF.rt === instrID.rt
-        )
-          return true;
-      } else {
-        if (instrIF.rs === instrID.rd || instrIF.rt === instrID.rt) return true;
-        if (lw === 1 && instrIF.rs === instrID.rt) return true;
+    if (instrIF?.opcode === "101011" || instrIF?.opcode === "100011") {
+      if (
+        (instrID.type === "R" &&
+          (instrID.rd === instrIF.rs || instrID.rd === instrIF.rt)) ||
+        (instrID.type === "I" &&
+          (instrID.rt === instrIF.rs || instrID.rt === instrIF.rt))
+      ) {
+        return true;
       }
-    } else {
-      if (instrID.type === "R") {
-        if (instrIF.rs === instrID.rd) return true;
-        if (sw === 1 && instrIF.rt === instrID.rd) return true;
-      } else {
-        if (instrIF.rs === instrID.rt) return true;
-        if (sw === 1 && instrIF.rt === instrID.rt) return true;
+    }
+    if (instrID?.opcode === "100011") {
+      if (
+        (instrIF.type === "R" &&
+          (instrID.rt === instrIF.rs || instrID.rt === instrIF.rt)) ||
+        (instrID.type === "I" && instrID.rt === instrIF.rs)
+      ) {
+        return true;
       }
     }
     return false;
   };
 
-  // Hazard + stall detection
-  for (let i = 1; i < currentState.instructions.length; i++) {
-    const stageIF = currentState.instructionStages[i];
-    const stageID = currentState.instructionStages[i - 1];
+  const forward = (
+    instr1: DecodedInstruction,
+    instr2: DecodedInstruction
+  ): boolean => {
+    console.log("Instruccion de la mesa ID:", instr1);
+    console.log("Instruccion de la mesa EX o MEM:", instr2);
+    if (
+      instr1.type === "R" &&
+      instr2.type === "R" &&
+      (instr1.rs === instr2.rd ||
+        (instr1.rt === instr2.rd && instr2.rd !== "00000"))
+    ) {
+      return true;
+    }
+    if (
+      instr1.type === "R" &&
+      instr2.type === "I" &&
+      (instr1.rs === instr2.rt ||
+        (instr1.rt === instr2.rt && instr2.opcode !== "101011"))
+    ) {
+      return true;
+    }
+    if (
+      (instr1.type === "I" &&
+        instr2.type === "R" &&
+        instr1.rs === instr2.rd &&
+        instr2.rd !== "00000") ||
+      (instr1.rt === instr2.rd && instr1.opcode === "101011")
+    ) {
+      return true;
+    }
+    if (
+      (instr1.type === "I" &&
+        instr2.type === "I" &&
+        instr1.rs === instr2.rt &&
+        instr2.opcode !== "101011") ||
+      (instr1.rt === instr2.rt && instr1.opcode === "101011")
+    ) {
+      return true;
+    }
+    return false;
+  };
 
-    if (stageIF === 0 && stageID === 1) {
-      const instrIF = decodeInstruction(currentState.instructions[i]);
-      const instrID = decodeInstruction(currentState.instructions[i - 1]);
-      if (instrIF && instrID) {
-        const isStore = instrIF.opcode === "101011";
-        const isLoad = instrID.opcode === "100011";
-        if (hasHazard(instrIF, instrID) && (isStore || isLoad)) {
-          newInstructions.splice(i, 0, "STALL");
-          insertedStall = true;
-          break;
-        }
+  const stageToInstructionIndex: Record<number, number | null> = {};
+  Object.entries(currentState.instructionStages).forEach(
+    ([instIndex, { stageIndex }]) => {
+      if (stageIndex !== null) {
+        stageToInstructionIndex[stageIndex] = parseInt(instIndex);
+      }
+    }
+  );
+
+  const idIndex = stageToInstructionIndex[1];
+  const ifIndex = stageToInstructionIndex[0];
+
+  if (typeof ifIndex === "number" && typeof idIndex === "number") {
+    const instrIF = decodeInstruction(currentState.instructions[ifIndex]);
+    const instrID = decodeInstruction(currentState.instructions[idIndex]);
+    if (instrIF && instrID) {
+      if (hasHazard(instrIF, instrID)) {
+        newInstructions.splice(ifIndex, 0, "STALL");
+        insertedStall = true;
       }
     }
   }
 
-  // Avance de instrucciones
   let newIndex = 0;
   for (let i = 0; i < newInstructions.length; i++) {
     const stageIndex = nextCycle - newIndex - 1;
     if (stageIndex >= 0 && stageIndex < currentState.stageCount) {
-      newInstructionStages[i] = stageIndex;
+      if (!newInstructionStages[i]) {
+        newInstructionStages[i] = { stageIndex };
+      } else {
+        newInstructionStages[i].stageIndex = stageIndex;
+      }
     } else {
-      newInstructionStages[i] = null;
-    }
-    newIndex++;
-  }
-
-  // Detección de forwarding en mismo ciclo (ciclo actual)
-  const forwardingPaths: {
-    fromIndex: number;
-    toIndex: number;
-    stage: string;
-  }[] = [];
-
-  const stageNames = ["IF", "ID", "EX", "MEM", "WB"];
-
-  for (let toIndex = 0; toIndex < newInstructions.length; toIndex++) {
-    const toInstr = decodeInstruction(newInstructions[toIndex]);
-    const toStage = newInstructionStages[toIndex];
-    if (!toInstr || newInstructions[toIndex] === "STALL" || toStage !== 1)
-      continue;
-
-    const neededRegs = [toInstr.rs, toInstr.rt];
-
-    for (let fromIndex = 0; fromIndex < newInstructions.length; fromIndex++) {
-      if (fromIndex === toIndex) continue;
-
-      const fromInstr = decodeInstruction(newInstructions[fromIndex]);
-      const fromStage = newInstructionStages[fromIndex];
-
-      if (
-        !fromInstr ||
-        newInstructions[fromIndex] === "STALL" ||
-        fromStage === null
-      )
-        continue;
-
-      const producedReg = fromInstr.type === "R" ? fromInstr.rd : fromInstr.rt;
-
-      if (!neededRegs.includes(producedReg)) continue;
-
-      if ([2, 3, 4].includes(fromStage)) {
-        const stageName = stageNames[fromStage];
-        forwardingPaths.push({
-          fromIndex,
-          toIndex,
-          stage: stageName, // Cambiado de fromStage a stage
-        });
+      if (!newInstructionStages[i]) {
+        newInstructionStages[i] = { stageIndex: null };
+      } else {
+        newInstructionStages[i].stageIndex = null;
       }
     }
+    newIndex++;
   }
 
   const longestPath = newInstructions.length + DEFAULT_STAGE_COUNT - 1;
   const newMaxCycles = Math.max(currentState.maxCycles, longestPath);
   const isFinished = nextCycle > longestPath;
   const isRunning = !isFinished;
+
+  const instrucciones: Record<string, { index: number; hex: string } | null> =
+    {};
+
+  STAGE_NAMES.forEach((stageName, stageIdx) => {
+    const entries = Object.entries(newInstructionStages).filter(
+      ([, info]) => info.stageIndex === stageIdx
+    );
+
+    if (entries.length > 0) {
+      const [instrIndexStr] = entries[0];
+      const instrIndex = parseInt(instrIndexStr);
+      const hex = newInstructions[instrIndex];
+      instrucciones[stageName] = { index: instrIndex, hex };
+      console.log(`   🛠 ${stageName}: instrucción[${instrIndex}] = ${hex}`);
+    } else {
+      instrucciones[stageName] = null;
+      console.log(`   🛠 ${stageName}: vacío`);
+    }
+  });
+
+  let instrID = null;
+  let instrEX = null;
+  let instrMEM = null;
+
+  if (instrucciones["ID"] && instrucciones["ID"].hex !== "STALL") {
+    instrID = decodeInstruction(instrucciones["ID"].hex);
+  }
+  if (instrucciones["EX"] && instrucciones["EX"].hex !== "STALL") {
+    instrEX = decodeInstruction(instrucciones["EX"].hex);
+  }
+  if (instrucciones["MEM"] && instrucciones["MEM"].hex !== "STALL") {
+    instrMEM = decodeInstruction(instrucciones["MEM"].hex);
+  }
+
+  // Forwarding desde EX
+  if (instrID && instrEX && forward(instrID, instrEX)) {
+    console.log("forward desde EX a ID");
+
+    const indexEX = instrucciones["EX"]?.index;
+    if (indexEX !== undefined && indexEX !== null) {
+      if (!newInstructionStages[indexEX]) {
+        newInstructionStages[indexEX] = { stageIndex: null };
+      }
+      newInstructionStages[indexEX].isForwarding = true;
+    }
+
+    const indexID = instrucciones["ID"]?.index;
+    if (indexID !== undefined && indexID !== null) {
+      if (!newInstructionStages[indexID]) {
+        newInstructionStages[indexID] = { stageIndex: null };
+      }
+      newInstructionStages[indexID].isForwarding = true;
+    }
+  }
+
+  // Forwarding desde MEM
+  if (instrID && instrMEM && forward(instrID, instrMEM)) {
+    console.log("forward desde MEM a ID");
+
+    const indexMEM = instrucciones["MEM"]?.index;
+    if (indexMEM !== undefined && indexMEM !== null) {
+      if (!newInstructionStages[indexMEM]) {
+        newInstructionStages[indexMEM] = { stageIndex: null };
+      }
+      newInstructionStages[indexMEM].isForwarding = true;
+    }
+
+    const indexID = instrucciones["ID"]?.index;
+    if (indexID !== undefined && indexID !== null) {
+      if (!newInstructionStages[indexID]) {
+        newInstructionStages[indexID] = { stageIndex: null };
+      }
+      newInstructionStages[indexID].isForwarding = true;
+    }
+  }
 
   return {
     ...currentState,
@@ -219,7 +308,6 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
     isRunning,
     isFinished,
     maxCycles: newMaxCycles,
-    forwardingPaths,
   };
 };
 
@@ -227,84 +315,82 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
 export function SimulationProvider({ children }: PropsWithChildren) {
   const [simulationState, setSimulationState] =
     React.useState<SimulationState>(initialState);
+
   const intervalRef = React.useRef<NodeJS.Timeout | null>(null);
 
-  const clearTimer = () => {
+  const clearTimer = React.useCallback(() => {
     if (intervalRef.current) {
       clearInterval(intervalRef.current);
       intervalRef.current = null;
     }
-  };
+  }, []);
 
   const runClock = React.useCallback(() => {
-    clearTimer(); // Clear any existing timer
-    if (!simulationState.isRunning || simulationState.isFinished) return; // Don't start timer if not running or finished
+    if (intervalRef.current !== null) return;
 
     intervalRef.current = setInterval(() => {
       setSimulationState((prevState) => {
         const nextState = calculateNextState(prevState);
-        // Check if the simulation just finished in this step
         if (nextState.isFinished && !prevState.isFinished) {
-          clearTimer(); // Stop the clock immediately
+          clearTimer();
         }
         return nextState;
       });
-    }, 1000); // Advance cycle every 1 second
-  }, [simulationState.isRunning, simulationState.isFinished]); // Dependencies
+    }, 1000);
+  }, [clearTimer]);
 
   const resetSimulation = React.useCallback(() => {
     clearTimer();
     setSimulationState(initialState);
-  }, []);
+  }, [clearTimer]);
 
   const startSimulation = React.useCallback(
     (submittedInstructions: string[]) => {
-      clearTimer(); // Clear previous timer just in case
+      clearTimer();
       if (submittedInstructions.length === 0) {
-        resetSimulation(); // Reset if no instructions submitted
+        resetSimulation();
         return;
       }
 
       const calculatedMaxCycles =
         submittedInstructions.length + DEFAULT_STAGE_COUNT - 1;
-      const initialStages: Record<number, number | null> = {};
-      // Initialize stages for cycle 1
+      const initialStages: Record<number, { stageIndex: number | null }> = {};
+
+      // Inicializar etapas para ciclo 1
       submittedInstructions.forEach((_, index) => {
-        const stageIndex = 1 - index - 1; // Calculate stage for cycle 1
+        const stageIndex = 1 - index - 1;
         if (stageIndex >= 0 && stageIndex < DEFAULT_STAGE_COUNT) {
-          initialStages[index] = stageIndex;
+          initialStages[index] = { stageIndex };
         } else {
-          initialStages[index] = null;
+          initialStages[index] = { stageIndex: null };
         }
       });
 
       setSimulationState({
         instructions: submittedInstructions,
-        currentCycle: 1, // Start from cycle 1
+        currentCycle: 1,
         maxCycles: calculatedMaxCycles,
         isRunning: true,
         stageCount: DEFAULT_STAGE_COUNT,
-        instructionStages: initialStages, // Set initial stages for cycle 1
+        instructionStages: initialStages,
         isFinished: false,
       });
-      // runClock will be triggered by the useEffect below when isRunning becomes true
     },
-    [resetSimulation]
+    [resetSimulation, clearTimer]
   );
 
-  const pauseSimulation = () => {
+  const pauseSimulation = React.useCallback(() => {
     setSimulationState((prevState) => {
       if (prevState.isRunning) {
         clearTimer();
         return { ...prevState, isRunning: false };
       }
-      return prevState; // No change if already paused
+      return prevState;
     });
-  };
+  }, [clearTimer]);
 
-  const resumeSimulation = () => {
+  const resumeSimulation = React.useCallback(() => {
     setSimulationState((prevState) => {
-      // Resume only if paused, started, and not finished
       if (
         !prevState.isRunning &&
         prevState.currentCycle > 0 &&
@@ -312,23 +398,26 @@ export function SimulationProvider({ children }: PropsWithChildren) {
       ) {
         return { ...prevState, isRunning: true };
       }
-      return prevState; // No change if running, not started, or finished
+      return prevState;
     });
-    // runClock will be triggered by useEffect
-  };
+  }, []);
 
-  // Effect to manage the interval timer based on isRunning state
+  // Solo corre una vez cuando cambia isRunning o isFinished
   React.useEffect(() => {
     if (simulationState.isRunning && !simulationState.isFinished) {
       runClock();
-    } else {
-      clearTimer();
     }
-    // Cleanup timer on unmount or when isRunning/isFinished changes
-    return clearTimer;
-  }, [simulationState.isRunning, simulationState.isFinished, runClock]);
 
-  // State value derived directly from simulationState
+    return () => {
+      clearTimer(); // Cleanup al desmontar o cambio
+    };
+  }, [
+    simulationState.isRunning,
+    simulationState.isFinished,
+    runClock,
+    clearTimer,
+  ]);
+
   const stateValue: SimulationState = simulationState;
 
   const actionsValue: SimulationActions = React.useMemo(
@@ -338,7 +427,7 @@ export function SimulationProvider({ children }: PropsWithChildren) {
       pauseSimulation,
       resumeSimulation,
     }),
-    [startSimulation, resetSimulation] // pause/resume don't change
+    [startSimulation, resetSimulation, pauseSimulation, resumeSimulation]
   );
 
   return (
@@ -350,7 +439,7 @@ export function SimulationProvider({ children }: PropsWithChildren) {
   );
 }
 
-// Custom hooks for easy context consumption
+// Custom hooks para consumir el contexto
 export function useSimulationState() {
   const context = React.useContext(SimulationStateContext);
   if (context === undefined) {
