@@ -76,17 +76,19 @@ const initialState: SimulationState = {
 }*/
 function calculatePipelineCyclesWithStalls(
   instructions: FetchInstruction[]
-): { pipeline: (FetchInstruction | null)[][]; finalStageInstructions: FetchInstruction[] } {
+): { pipeline: (FetchInstruction | null)[][]; finalStageInstructions: string[] } {
   const stageCount = DEFAULT_STAGE_COUNT;
   const pipeline: (FetchInstruction | null)[][] = [];
-  const finalStageInstructions: FetchInstruction[] = [];
+  const finalStageInstructions: string[] = [];
 
   const queue = [...instructions];
   const currentStage: (FetchInstruction | null)[] = Array(stageCount).fill(null);
   const stall: FetchInstruction = { instruction: 'STALL', RegWrite: false };
 
-  const getReg = (inst: any, reg: 'rs' | 'rt' | 'rd') => (inst && inst[reg] ? inst[reg] : null);
-  const getRegWrite = (inst: any) => (typeof inst?.RegWrite === 'boolean' ? inst.RegWrite : false);
+  const getReg = (inst: any, reg: 'rs' | 'rt' | 'rd') =>
+    inst && inst[reg] ? inst[reg] : null;
+  const getRegWrite = (inst: any) =>
+    typeof inst?.RegWrite === 'boolean' ? inst.RegWrite : false;
 
   while (true) {
     let hazardDetection: 'EX' | 'MEM' | null = null;
@@ -100,27 +102,40 @@ function calculatePipelineCyclesWithStalls(
       const rt = getReg(ifId, 'rt');
 
       if (
-        idEx && idEx.instruction !== 'STALL' &&
-        getRegWrite(idEx) && getReg(idEx, 'rd') && getReg(idEx, 'rd') !== '00000' &&
+        idEx &&
+        idEx.instruction !== 'STALL' &&
+        getRegWrite(idEx) &&
+        getReg(idEx, 'rd') &&
+        getReg(idEx, 'rd') !== '00000' &&
         (getReg(idEx, 'rd') === rs || getReg(idEx, 'rd') === rt)
       ) {
         hazardDetection = 'EX';
       }
 
       if (
-        (exMem && exMem.instruction !== 'STALL' &&
-        getRegWrite(exMem) && getReg(exMem, 'rd') && getReg(exMem, 'rd') !== '00000' &&
-        (getReg(exMem, 'rd') === rs || getReg(exMem, 'rd') === rt)) ||
-        (memWb && memWb.instruction !== 'STALL' &&
-        getRegWrite(memWb) && getReg(memWb, 'rd') && getReg(memWb, 'rd') !== '00000' &&
-        (getReg(memWb, 'rd') === rs || getReg(memWb, 'rd') === rt))
+        (exMem &&
+          exMem.instruction !== 'STALL' &&
+          getRegWrite(exMem) &&
+          getReg(exMem, 'rd') &&
+          getReg(exMem, 'rd') !== '00000' &&
+          (getReg(exMem, 'rd') === rs || getReg(exMem, 'rd') === rt)) ||
+        (memWb &&
+          memWb.instruction !== 'STALL' &&
+          getRegWrite(memWb) &&
+          getReg(memWb, 'rd') &&
+          getReg(memWb, 'rd') !== '00000' &&
+          (getReg(memWb, 'rd') === rs || getReg(memWb, 'rd') === rt))
       ) {
         hazardDetection = 'MEM';
       }
     }
 
-    const stageCalc = hazardDetection === 'EX' ? stageCount - 4 :
-                      hazardDetection === 'MEM' ? stageCount - 3 : 0;
+    const stageCalc =
+      hazardDetection === 'EX'
+        ? stageCount - 4
+        : hazardDetection === 'MEM'
+        ? stageCount - 3
+        : 0;
 
     for (let i = stageCount - 1; i > stageCalc; i--) {
       currentStage[i] = currentStage[i - 1];
@@ -138,17 +153,19 @@ function calculatePipelineCyclesWithStalls(
         break;
     }
 
-    // Guardar la instrucción que sale del pipeline (WB)
-    const exiting = currentStage[stageCount - 1];
-    if (exiting !== null) {
-      finalStageInstructions.push(exiting);
-    }
-
-    pipeline.push([...currentStage]);
-
+    // Verificar si ya no hay instrucciones y el pipeline está vacío antes de guardar estado
     if (queue.length === 0 && currentStage.every(stage => stage === null)) {
       break;
     }
+
+    // Guardar instrucción que sale del pipeline (WB)
+    const exiting = currentStage[stageCount - 1];
+    if (exiting !== null) {
+      finalStageInstructions.push(exiting.instruction);
+    }
+
+    // Guardar el estado del pipeline
+    pipeline.push([...currentStage]);
   }
 
   return { pipeline, finalStageInstructions };
@@ -239,8 +256,8 @@ export function SimulationProvider({ children }: PropsWithChildren) {
     }
 
     const Instructions: FetchInstruction[] = submittedInstructions.map(hexToBinary).map(BinaryToInstruction).filter((inst): inst is FetchInstruction => inst !== null);
-    const { pipeline, finalStageInstructions } = calculatePipelineCyclesWithStalls(Instructions);
-    console.log('Orden', finalStageInstructions);;
+    const {pipeline,finalStageInstructions} = calculatePipelineCyclesWithStalls(Instructions);
+    console.log('finalStageInstructions', finalStageInstructions);
     const calculatedMaxCycles = submittedInstructions.length + DEFAULT_STAGE_COUNT - 1;
     const initialStages: Record<number, number | null> = {};
     // Initialize stages for cycle 1
