@@ -12,7 +12,7 @@ import {
   TableCaption,
 } from '@/components/ui/table';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Download, Code2, Cpu, MemoryStick, CheckSquare, Cloud} from 'lucide-react';
+import { Download, Code2, Cpu, MemoryStick, CheckSquare, Cloud } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useSimulationState } from '@/context/SimulationContext'; // Import context hook
 
@@ -25,23 +25,19 @@ const STAGES = [
 ] as const;
 
 export function PipelineVisualization() {
-  // Get state from context
   const {
     instructions,
     currentCycle: cycle,
-    maxCycles, // Max cycles determines the number of columns
+    maxCycles,
     isRunning,
-    instructionStages, // Use the pre-calculated stages
-    isFinished, // Use the finished flag from context
-    pipelineHistory
+    instructionStages,
+    isFinished,
+    pipelineHistory,
+    forwardingCycles
   } = useSimulationState();
 
-
-  // Use maxCycles for the number of columns if it's calculated, otherwise 0
   const totalCyclesToDisplay = maxCycles > 0 ? maxCycles : 0;
   const cycleNumbers = Array.from({ length: totalCyclesToDisplay }, (_, i) => i + 1);
-
-  // if (instructions.length === 0) return null; // Handled in page.tsx
 
   return (
     <Card className="w-full overflow-hidden">
@@ -54,7 +50,6 @@ export function PipelineVisualization() {
             <TableCaption>MIPS instruction pipeline visualization</TableCaption>
             <TableHeader>
               <TableRow>
-                 {/* Use bg-card for sticky header cell background */}
                 <TableHead className="w-[150px] sticky left-0 bg-card z-10 border-r">Instruction</TableHead>
                 {cycleNumbers.map((c) => (
                   <TableHead key={`cycle-${c}`} className="text-center w-16">
@@ -78,6 +73,19 @@ export function PipelineVisualization() {
                     const shouldAnimate = isActualCurrentStage && isRunning && !isFinished;
                     const shouldHighlightStatically = isActualCurrentStage && !isRunning && !isFinished;
                     const isPastStage = isInPipelineAtThisCycle && c < cycle;
+
+                    // Obtener forwarding info
+                    const forwardingInfo = forwardingCycles?.[c - 1]; // ciclo 1 es index 0
+                    const isEX = currentStageData?.name === 'EX';
+                    const isMEM = currentStageData?.name === 'MEM';
+                    const isWB = currentStageData?.name === 'WB';
+
+                    const isEXForwarding = forwardingInfo?.hasEXForwarding && (isEX || isMEM);
+                    const isMEMForwarding = forwardingInfo?.hasMEMForwarding && (isEX || isWB);
+
+                    const forwardingClass = (isEXForwarding || isMEMForwarding)
+                      ? 'bg-yellow-300 text-black'
+                      : '';
 
                     let cellContent = null;
                     if (inst === "STALL" && currentStageData) {
@@ -114,7 +122,8 @@ export function PipelineVisualization() {
                           shouldAnimate ? 'bg-accent text-accent-foreground animate-pulse-bg' :
                           shouldHighlightStatically ? 'bg-accent text-accent-foreground' :
                           isPastStage ? 'bg-secondary text-secondary-foreground' :
-                          'bg-background'
+                          'bg-background',
+                          forwardingClass
                         )}
                       >
                         {cellContent}
