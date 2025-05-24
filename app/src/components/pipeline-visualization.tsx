@@ -81,7 +81,7 @@ export function PipelineVisualization() {
                     const currentStageData = isInPipelineAtThisCycle ? STAGES[expectedStageIndex] : null;
 
                     // Is this cell representing the instruction's *actual* current stage in the *current* simulation cycle?
-                    const isActualCurrentStage = currentStageIndex !== null && expectedStageIndex === currentStageIndex && c === cycle;
+                    const isActualCurrentStage = currentStageIndex !== null && expectedStageIndex === currentStageIndex; //&& c === cycle;
 
                      // Only animate if the simulation is running AND not yet completed
                      const shouldAnimate = isActualCurrentStage && isRunning && !isFinished;
@@ -91,9 +91,7 @@ export function PipelineVisualization() {
                      const isFinishedInst = instructionFinished[instIndex]; // check if the current instruction is finished or not
                      const isPastStage = (c - (instIndex + 1)) < (currentStageIndex === null ? (isFinishedInst ? Infinity : -1) : currentStageIndex) && currentStageData;
 
-                     if (currentStageData && instIndex === 0 && currentStageData.name === "ID") {
-                      console.log(c);
-                     }
+              
 
                     return (
                       <TableCell

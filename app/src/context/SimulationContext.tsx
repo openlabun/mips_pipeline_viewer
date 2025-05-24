@@ -3,6 +3,8 @@
 
 import type { PropsWithChildren } from 'react';
 import * as React from 'react';
+//importar Decode
+import {decodeInstruction,Stall,canForward} from '../lib/decode'
 
 // Define the stage names (optional, but good for clarity)
 const STAGE_NAMES = ['IF', 'ID', 'EX', 'MEM', 'WB'] as const;
@@ -63,8 +65,25 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
     const stageIndex = nextCycle - index - 1;
 
     if (stageIndex >= 0 && stageIndex < currentState.stageCount) {
-      newInstructionStages[index] = stageIndex;
-      activeInstructions++; // Count instructions currently in the pipeline
+      if (stageIndex==1 && currentState.instructions[index-1]){
+        const i1= decodeInstruction(currentState.instructions[index])
+        const i2= decodeInstruction(currentState.instructions[index-1])
+        console.log(i1,currentState.instructions[index])
+        console.log(i2,currentState.instructions[index-1])
+        if (Stall(i1,i2)){
+          console.log("aqui hay un stall")
+          activeInstructions++
+        }
+        else{
+      newInstructionStages[index] =(currentState.instructionStages[index]??-1)+1
+      activeInstructions++}
+      }else{
+      newInstructionStages[index] = (currentState.instructionStages[index]??-1)+1
+      activeInstructions++
+      }
+      
+      
+      ; // Count instructions currently in the pipeline
     } else {
       if (stageIndex >= currentState.stageCount) currentState.instructionFinished[index] = true;
       newInstructionStages[index] = null; // Not in pipeline (either hasn't started or has finished)
