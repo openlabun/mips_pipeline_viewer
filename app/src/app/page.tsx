@@ -1,64 +1,93 @@
-// src/app/page.tsx
-
 "use client";
-
-import type * as React from 'react';
 import { InstructionInput } from '@/components/instruction-input';
 import { PipelineVisualization } from '@/components/pipeline-visualization';
 import { Separator } from '@/components/ui/separator';
-import { useSimulationState, useSimulationActions } from '@/context/SimulationContext'; // Import context hooks
+import { useSimulationState, useSimulationActions, SimulationMode } from '@/context/SimulationContext';
+import { useState } from 'react';
 
 export default function Home() {
-  // Get state and actions from context
-  const { instructions, isRunning, currentCycle, maxCycles, isFinished } = useSimulationState();
-  const { startSimulation, resetSimulation } = useSimulationActions();
+  const { instructions, isRunning, currentCycle, maxCycles, isFinished, mode } = useSimulationState();
+  const { startSimulation, resetSimulation, pauseSimulation, resumeSimulation } = useSimulationActions();
+  const [localMode, setLocalMode] = useState<SimulationMode>(mode);
 
-  // Simulation has started if cycle > 0
-  const hasStarted = currentCycle > 0;
+  const handleSubmit = (submittedInstructions: string[]) => {
+    startSimulation(submittedInstructions, localMode);
+  };
 
   return (
     <div className="container mx-auto p-4 md:p-8 flex flex-col items-center space-y-8">
       <header className="text-center">
         <h1 className="text-3xl font-bold text-primary">MIPS Pipeline Viewer</h1>
         <p className="text-muted-foreground">
-          Visualize the flow of MIPS instructions through a 5-stage pipeline.
+          Visualiza el flujo de instrucciones MIPS en un pipeline de 5 etapas
         </p>
       </header>
 
-      {/* Pass context actions/state down */}
+      <div className="flex flex-col items-center space-y-4 w-full max-w-md">
+        <div className="flex items-center gap-4 w-full">
+          <label className="font-medium">Modo:</label>
+          <select
+            value={localMode}
+            onChange={(e) => setLocalMode(e.target.value as SimulationMode)}
+            className="border rounded px-3 py-2 flex-1"
+            disabled={isRunning}
+          >
+            <option value="default">Por defecto</option>
+            <option value="stall">Stall</option>
+            <option value="forward">Forwarding</option>
+          </select>
+        </div>
+
+        {localMode !== 'default' && (
+          <div className="text-sm text-muted-foreground text-center px-4">
+            {localMode === 'stall' 
+              ? 'Modo Stall: Inserta burbujas cuando detecta dependencias RAW'
+              : 'Modo Forwarding: Minimiza stalls usando adelantamiento de datos'}
+          </div>
+        )}
+      </div>
+
       <InstructionInput
-        onInstructionsSubmit={startSimulation}
+        onInstructionsSubmit={handleSubmit}
         onReset={resetSimulation}
-        isRunning={isRunning} // isRunning is needed for button state/icons
+        isRunning={isRunning}
       />
 
       <Separator className="my-4" />
 
-      {/* Conditionally render visualization and cycle info only if instructions exist */}
       {instructions.length > 0 && (
         <>
           <PipelineVisualization />
-          {/* Display cycle info below the visualization */}
-           {/* Ensure maxCycles is valid before displaying */}
-           { maxCycles > 0 && (
-              <p className="text-center text-muted-foreground mt-4">
-                Cycle: {currentCycle} / {maxCycles} {isFinished ? '(Finished)' : isRunning ? '(Running)' : '(Paused)'}
-              </p>
-            )}
+          
+          <div className="flex flex-col items-center mt-4 space-y-2">
+            <div className="flex items-center gap-2">
+              <span className="font-medium">Ciclo:</span>
+              <span className="px-2 py-1 bg-accent rounded-md">
+                {isFinished ? maxCycles : currentCycle} / {maxCycles}
+              </span>
+              <span className={`px-2 py-1 rounded text-xs font-medium ${
+                isFinished ? 'bg-green-100 text-green-800' :
+                isRunning ? 'bg-blue-100 text-blue-800' :
+                'bg-yellow-100 text-yellow-800'
+              }`}>
+                {isFinished ? 'Completado' : isRunning ? 'En ejecución' : 'Pausado'}
+              </span>
+            </div>
+            
+            <div className="text-sm text-muted-foreground">
+              {mode !== 'default' && (
+                <p>Nota: Ciclos reales pueden variar por dependencias</p>
+              )}
+            </div>
+          </div>
         </>
       )}
-       {/* Show message if reset/never run and no instructions */}
-       {!hasStarted && instructions.length === 0 && (
-        <p className="text-center text-muted-foreground mt-4">
-          Enter instructions and press Start Simulation.
+
+      {!instructions.length && (
+        <p className="text-muted-foreground">
+          {currentCycle > 0 ? 'Simulación reiniciada. Ingresa nuevas instrucciones.' : 'Ingresa instrucciones para comenzar.'}
         </p>
-       )}
-       {/* Show different message if reset after a run */}
-       {hasStarted && instructions.length === 0 && (
-         <p className="text-center text-muted-foreground mt-4">
-           Simulation reset. Enter new instructions to start again.
-         </p>
-       )}
+      )}
     </div>
   );
 }
