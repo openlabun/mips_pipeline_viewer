@@ -109,6 +109,115 @@ function getInstructionDescription(hex: string): string {
   }
 }
 
+// Función auxiliar para detectar riesgos de datos
+function hasDataHazard(prevHex: string, currHex: string): boolean {
+  const decode = (hex: string) => {
+    const instr = parseInt(hex, 16);
+    const op = (instr >>> 26) & 0x3f;
+    if (op === 0x00) {
+      return {
+        type: "R" as const,
+        rs: (instr >>> 21) & 0x1f,
+        rt: (instr >>> 16) & 0x1f,
+        rd: (instr >>> 11) & 0x1f,
+      };
+    }
+    return {
+      type: "I" as const,
+      op,
+      rs: (instr >>> 21) & 0x1f,
+      rt: (instr >>> 16) & 0x1f,
+    };
+  };
+
+  const p = decode(prevHex);
+  const c = decode(currHex);
+
+  let prevDst: number | null = null;
+  if (p.type === "R") prevDst = p.rd;
+  else if (p.op === 0x23) prevDst = p.rt; // lw
+  else if (p.op !== 0x2b) prevDst = p.rt; // I-tipo salvo sw
+
+  const currSrc: number[] = [];
+  if (c.type === "R") currSrc.push(c.rs, c.rt);
+  else if (c.op === 0x23) currSrc.push(c.rs); // lw
+  else if (c.op === 0x2b) currSrc.push(c.rs, c.rt); // sw
+  else currSrc.push(c.rs);
+
+  return prevDst !== null && currSrc.includes(prevDst);
+}
+
+// Función para detectar posibles forwardings
+function detectForwarding(
+  prevHex: string,
+  currHex: string,
+  prevStage: number,
+  currStage: number,
+  fromIdx: number,
+  toIdx: number,
+  cycle: number
+) {
+  if (currStage !== 2) return null; // Solo forwardear a EX
+  if (prevStage !== 2 && prevStage !== 3) return null; // Solo desde EX o MEM
+
+  const prev = decodeInstruction(prevHex);
+  const curr = decodeInstruction(currHex);
+
+  // Destino de la instrucción anterior
+  let prevDest: number | null = null;
+  if (prev.type === "R") prevDest = prev.rd;
+  else if (prev.opcode === 0x23) prevDest = prev.rt; // lw
+  else if (prev.opcode !== 0x2b) prevDest = prev.rt; // I-tipo con destino
+
+  if (prevDest === null) return null;
+
+  // Ver qué registro necesita forwarding
+  let targetReg: "rs" | "rt" | null = null;
+  
+  if (curr.rs === prevDest) {
+    targetReg = "rs";
+  } else if ((curr.type === "R" || curr.opcode === 0x2b) && curr.rt === prevDest) {
+    targetReg = "rt";
+  } else {
+    return null; // No hay necesidad de forwarding
+  }
+
+  // Caso especial: no forwardear desde EX para operaciones lw
+  if (prev.opcode === 0x23 && prevStage === 2) {
+    return null;
+  }
+
+  return {
+    from: fromIdx,
+    to: toIdx,
+    source: prevStage === 2 ? "EX" : "MEM",
+    target: targetReg,
+    cycle
+  };
+}
+
+// Función para decodificar la instrucción
+function decodeInstruction(hex: string) {
+  const instr = parseInt(hex, 16);
+  const opcode = (instr >>> 26) & 0x3f;
+
+  if (opcode === 0x00) {
+    return {
+      type: "R" as const,
+      opcode,
+      rs: (instr >>> 21) & 0x1f,
+      rt: (instr >>> 16) & 0x1f,
+      rd: (instr >>> 11) & 0x1f,
+    };
+  }
+  return {
+    type: "I" as const,
+    opcode,
+    rs: (instr >>> 21) & 0x1f,
+    rt: (instr >>> 16) & 0x1f,
+  };
+}
+
 const STAGES = [
   { name: "IF", icon: Download, description: "Búsqueda de instrucción" },
   { name: "ID", icon: Code2, description: "Decodificación de instrucción" },
@@ -139,58 +248,63 @@ export function PipelineVisualization() {
     if (
       mode !== "stall" ||
       i === 0 ||
-      //!isRunning ||
       isFinished ||
       instructionStages[i] !== 1 || // curr en ID
       instructionStages[i - 1] !== 2 // prev en EX
     )
       return null;
 
-    // Detectar riesgos de datos
-    const hasDataHazard = (prevHex: string, currHex: string): boolean => {
-      const decode = (hex: string) => {
-        const instr = parseInt(hex, 16);
-        const op = (instr >>> 26) & 0x3f;
-        if (op === 0x00) {
-          return {
-            type: "R" as const,
-            rs: (instr >>> 21) & 0x1f,
-            rt: (instr >>> 16) & 0x1f,
-            rd: (instr >>> 11) & 0x1f,
-          };
-        }
-        return {
-          type: "I" as const,
-          op,
-          rs: (instr >>> 21) & 0x1f,
-          rt: (instr >>> 16) & 0x1f,
-        };
-      };
-
-      const p = decode(prevHex);
-      const c = decode(currHex);
-
-      let prevDst: number | null = null;
-      if (p.type === "R") prevDst = p.rd;
-      else if (p.op === 0x23) prevDst = p.rt; // lw
-      else if (p.op !== 0x2b) prevDst = p.rt; // I-tipo salvo sw
-
-      const currSrc: number[] = [];
-      if (c.type === "R") currSrc.push(c.rs, c.rt);
-      else if (c.op === 0x23) currSrc.push(c.rs); // lw
-      else if (c.op === 0x2b) currSrc.push(c.rs, c.rt); // sw
-      else currSrc.push(c.rs);
-
-      return prevDst !== null && currSrc.includes(prevDst);
-    };
-
     return hasDataHazard(instructions[i - 1], instructions[i]) ? i : null;
   });
 
   const stallDetected = stalls.some((s) => s !== null);
 
-  // Obtener forwarding activos para el ciclo actual
-  const currentForwardings = forwardingPaths.filter((fw) => fw.cycle === cycle);
+  // Obtener forwarding activos para el ciclo actual desde el estado
+  const savedForwardings = forwardingPaths.filter((fw) => fw.cycle === cycle);
+  
+  // Función para detectar posibles forwardings en el ciclo actual
+  // cuando navegamos con flechas
+  const detectDynamicForwardings = () => {
+    if (mode !== "forwarding" || isFinished) return [];
+    
+    const detected = [];
+    
+    for (let i = 1; i < instructions.length; i++) {
+      const currStage = instructionStages[i];
+      
+      if (currStage === 2) { // La instrucción está en etapa EX
+        for (let j = 0; j < i; j++) {
+          const prevStage = instructionStages[j];
+          
+          if ((prevStage === 2 || prevStage === 3) && 
+              hasDataHazard(instructions[j], instructions[i])) {
+            
+            const fwInfo = detectForwarding(
+              instructions[j],
+              instructions[i],
+              prevStage,
+              currStage,
+              j,
+              i,
+              cycle
+            );
+            
+            if (fwInfo) {
+              detected.push(fwInfo);
+            }
+          }
+        }
+      }
+    }
+    
+    return detected;
+  };
+  
+  // Combinamos forwardings guardados con los detectados dinámicamente
+  const currentForwardings = savedForwardings.length > 0 
+    ? savedForwardings 
+    : detectDynamicForwardings();
+    
   const hasForwarding = currentForwardings.length > 0;
 
   return (
@@ -358,15 +472,16 @@ export function PipelineVisualization() {
                       stalls.includes(i) && currStage === 1 && c >= cycle;
 
                     // Forwarding activo para esta instrucción y ciclo
+                    // Comprobamos tanto los forwardings guardados como los detectados dinámicamente
                     const isForwardTarget =
                       mode === "forwarding" &&
-                      forwardingPaths.some(
+                      currentForwardings.some(
                         (fw) => fw.to === i && fw.cycle === c
                       );
 
                     const isForwardSource =
                       mode === "forwarding" &&
-                      forwardingPaths.some(
+                      currentForwardings.some(
                         (fw) => fw.from === i && fw.cycle === c
                       );
 
