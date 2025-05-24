@@ -111,7 +111,7 @@ export function InstructionInput({
 
           {/* Start Button */}
           <Button onClick={handleSubmit} disabled={disableInputAndStart} className="flex-1">
-            {isFinished ? "Finished" : hasStarted ? "Running..." : "Start Simulation"}
+            {isFinished ? "Restart Simulation" : hasStarted ? "Running..." : "Start Simulation"}
           </Button>
 
           {/* Play/Pause Button */}

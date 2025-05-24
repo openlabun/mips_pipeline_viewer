@@ -7,6 +7,19 @@ import { hexToBinary, BinaryToInstruction, FetchInstruction } from '../utils/Ins
 const STAGE_NAMES = ["IF", "ID", "EX", "MEM", "WB"] as const;
 type StageName = typeof STAGE_NAMES[number];
 
+interface ForwardingEvent {
+  cycle: number;
+  stage: number; // 0: IF, 1: ID, 2: EX, 3: MEM, 4: WB
+  type: 'EX' | 'MEM';
+  reg: 'rs' | 'rt';
+  instrIndex: number;
+}
+
+interface ForwardingCycleInfo {
+  hasEXForwarding: boolean;
+  hasMEMForwarding: boolean;
+}
+
 interface SimulationState {
   instructions: string[];
   currentCycle: number;
@@ -16,6 +29,8 @@ interface SimulationState {
   instructionStages: Record<number, number | null>;
   isFinished: boolean;
   pipelineHistory: (FetchInstruction | null)[][];
+  forwardingEvents?: ForwardingEvent[]; // <--- NUEVO
+  forwardingCycles?: ForwardingCycleInfo[]; // <--- NUEVO
 }
 
 interface SimulationActions {
@@ -35,7 +50,6 @@ const SimulationForwardingContext = React.createContext<{
 } | undefined>(undefined);
 
 const DEFAULT_STAGE_COUNT = STAGE_NAMES.length;
-
 const initialState: SimulationState = {
   instructions: [],
   currentCycle: 0,
@@ -44,13 +58,22 @@ const initialState: SimulationState = {
   stageCount: DEFAULT_STAGE_COUNT,
   instructionStages: {},
   isFinished: false,
-  pipelineHistory: []
+  pipelineHistory: [],
+  forwardingCycles: []
 };
 
-function calculatePipelineCyclesWithStalls(instructions: FetchInstruction[], forward: boolean): { pipeline: (FetchInstruction | null)[][]; finalStageInstructions: string[] } {
+function calculatePipelineCyclesWithStalls(
+  instructions: FetchInstruction[],
+  forward: boolean
+): {
+  pipeline: (FetchInstruction | null)[][];
+  finalStageInstructions: string[];
+  forwardingCycles: ForwardingCycleInfo[];
+} {
   const stageCount = DEFAULT_STAGE_COUNT;
   const pipeline: (FetchInstruction | null)[][] = [];
   const finalStageInstructions: string[] = [];
+  const forwardingCycles: ForwardingCycleInfo[] = [];
 
   const queue = [...instructions];
   const currentStage: (FetchInstruction | null)[] = Array(stageCount).fill(null);
@@ -60,14 +83,54 @@ function calculatePipelineCyclesWithStalls(instructions: FetchInstruction[], for
     inst && inst[reg] ? inst[reg] : null;
   const getRegWrite = (inst: any) =>
     typeof inst?.RegWrite === 'boolean' ? inst.RegWrite : false;
-
   while (true) {
     let hazardDetection: 'EX' | 'MEM' | null = null;
     const ifId = currentStage[0];
     const idEx = currentStage[1];
     const exMem = currentStage[2];
     const memWb = currentStage[3];
+    
+    // Inicializa los booleanos de forwarding para este ciclo
+    let hasEXForwarding = false;
+    let hasMEMForwarding = false;
+    if (forward) {
+      const rs = getReg(ifId, 'rs');
+      const rt = getReg(ifId, 'rt');
+    
+      // EX Hazard
+      if (
+        exMem &&
+        getRegWrite(exMem) &&
+        getReg(exMem, 'rd') !== '00000' &&
+        (
+          getReg(exMem, 'rd') === getReg(idEx, 'rs') ||
+          getReg(exMem, 'rd') === getReg(idEx, 'rt')
+        )
+      ) {
+        hasEXForwarding = true;
+      }
 
+      // MEM Hazard
+      if (
+        memWb &&
+        getRegWrite(memWb)  &&
+        getReg(memWb, 'rd') !== '00000' &&
+        (
+          (
+            (!exMem || getReg(exMem, 'rd') !== getReg(idEx, 'rs')) &&
+            getReg(memWb, 'rd') === getReg(idEx, 'rs')
+          ) ||
+          (
+            (!exMem || getReg(exMem, 'rd') !== getReg(idEx, 'rt')) &&
+            getReg(memWb, 'rd') === getReg(idEx, 'rt')
+          )
+        )
+      ) {
+        hasMEMForwarding = true;
+      }
+    }
+
+    // ...hazard/stall logic igual que antes...
     if (ifId && ifId.instruction !== 'STALL') {
       const rs = getReg(ifId, 'rs');
       const rt = getReg(ifId, 'rt');
@@ -101,8 +164,8 @@ function calculatePipelineCyclesWithStalls(instructions: FetchInstruction[], for
       }
     }
 
-    if (forward){
-      hazardDetection = hazardDetection === 'EX' && idEx?.opcode === '100011' ? hazardDetection : null
+    if (forward) {
+      hazardDetection = hazardDetection === 'EX' && idEx?.opcode === '100011' ? hazardDetection : null;
     }
 
     const stageCalc =
@@ -138,9 +201,11 @@ function calculatePipelineCyclesWithStalls(instructions: FetchInstruction[], for
     }
 
     pipeline.push([...currentStage]);
+    forwardingCycles.push({ hasEXForwarding, hasMEMForwarding }); // Guarda los booleanos de este ciclo
+
   }
 
-  return { pipeline, finalStageInstructions };
+  return { pipeline, finalStageInstructions, forwardingCycles };
 }
 
 const calculateNextState = (currentState: SimulationState): SimulationState => {
@@ -225,7 +290,7 @@ export function SimulationProvider({ children }: PropsWithChildren) {
       .map(BinaryToInstruction)
       .filter((inst): inst is FetchInstruction => inst !== null);
 
-    const { pipeline, finalStageInstructions } = calculatePipelineCyclesWithStalls(Instructions, isForwardingParam);
+    const { pipeline, finalStageInstructions, forwardingCycles } = calculatePipelineCyclesWithStalls(Instructions, isForwardingParam);
     const initialStages: Record<number, number | null> = {};
 
     submittedInstructions.forEach((_, index) => {
@@ -241,7 +306,8 @@ export function SimulationProvider({ children }: PropsWithChildren) {
       stageCount: DEFAULT_STAGE_COUNT,
       instructionStages: initialStages,
       isFinished: false,
-      pipelineHistory: pipeline
+      pipelineHistory: pipeline,
+      forwardingCycles // <--- agrega esto
     });
   }, [resetSimulation]);
 
