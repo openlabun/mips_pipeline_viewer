@@ -47,46 +47,70 @@ const initialState: SimulationState = {
   instructionFinished: {},
   isFinished: false,
 };
-
+let blockindex=-2
 // Function to calculate the next state based on the current state
 const calculateNextState = (currentState: SimulationState): SimulationState => {
   if (!currentState.isRunning || currentState.isFinished) {
     return currentState; // No changes if not running or already finished
   }
 
-  const nextCycle = currentState.currentCycle + 1;
+  let nextCycle = currentState.currentCycle + 1;
   const newInstructionStages: Record<number, number | null> = {};
   let activeInstructions = 0;
-
   currentState.instructions.forEach((_, index) => {
     // Calculate the stage index for the instruction in the next cycle
     // Instruction `index` enters stage `s` (0-based) at cycle `index + s + 1`
     // So, in cycle `c`, the stage is `c - index - 1`
     const stageIndex = nextCycle - index - 1;
-
-    if (stageIndex >= 0 && stageIndex < currentState.stageCount) {
-      if (stageIndex==1 && currentState.instructions[index-1]){
+    
+    if (stageIndex >= 0 && ((currentState.instructionStages[index]??-1)+1) < currentState.stageCount && !currentState.instructionFinished[index]){
+      //complete stall logic
+      if (stageIndex==0 && currentState.instructions[index-1]){
         const i1= decodeInstruction(currentState.instructions[index])
         const i2= decodeInstruction(currentState.instructions[index-1])
-        console.log(i1,currentState.instructions[index])
-        console.log(i2,currentState.instructions[index-1])
-        if (Stall(i1,i2)){
+        if (currentState.instructions[index-2]){
+          const i3= decodeInstruction(currentState.instructions[index-2])
+          if (Stall(i3,i1) && ((currentState.instructionStages[index-2]??-1))+3 < currentState.stageCount && !currentState.instructionFinished[index-2]){
+
+          console.log("aqui hay un stall 2.0")
+          activeInstructions++
+          nextCycle--
+          blockindex=index+1
+          }else {        
+          if (Stall(i2,i1) && ((currentState.instructionStages[index-1]??-1))+3 < currentState.stageCount && !currentState.instructionFinished[index-1]){
           console.log("aqui hay un stall")
           activeInstructions++
+          nextCycle--
+          blockindex=index+1
         }
         else{
-      newInstructionStages[index] =(currentState.instructionStages[index]??-1)+1
+      if (index==blockindex) {
+        blockindex=index+1
+      }else
+      {newInstructionStages[index] =(currentState.instructionStages[index]??-1)+1
       activeInstructions++}
-      }else{
-      newInstructionStages[index] = (currentState.instructionStages[index]??-1)+1
-      activeInstructions++
       }
-      
+
+          }
+        }else {
+      newInstructionStages[index] =(currentState.instructionStages[index]??-1)+1
+      activeInstructions++
+        }
+        
+
+
+      }else{          if (blockindex!=index){
+        newInstructionStages[index] = (currentState.instructionStages[index]??-1)+1
+        activeInstructions++
+      }
+      }
       
       ; // Count instructions currently in the pipeline
     } else {
-      if (stageIndex >= currentState.stageCount) currentState.instructionFinished[index] = true;
-      newInstructionStages[index] = null; // Not in pipeline (either hasn't started or has finished)
+      if (((currentState.instructionStages[index]??-1)+1)>= currentState.stageCount ||currentState.instructionFinished[index]) {
+      currentState.instructionFinished[index] = true;
+      newInstructionStages[index] = null;}
+      // Not in pipeline (either hasn't started or has finished)
     }
   });
 
@@ -94,8 +118,7 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
   const completionCycle = currentState.instructions.length > 0
     ? currentState.instructions.length + currentState.stageCount - 1
     : 0;
-
-  const isFinished = nextCycle > completionCycle;
+  const isFinished = currentState.instructionFinished[currentState.instructions.length-1]
   const isRunning = !isFinished; // Stop running when finished
 
   return {
