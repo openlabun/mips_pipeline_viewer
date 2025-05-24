@@ -11,7 +11,7 @@ const HEX_REGEX = /^[0-9a-fA-F]{8}$/
 
 // Tipos para las props
 interface InstructionInputProps {
-  onInstructionsSubmit: (instructions: string[]) => void
+  onInstructionsSubmit: (instructions: string[], isForwarding: boolean) => void
   onReset: () => void
   isRunning: boolean
 }
@@ -63,7 +63,7 @@ export function InstructionInput({
       return
     }
 
-    onInstructionsSubmit(currentInstructions)
+    onInstructionsSubmit(currentInstructions, isForwarding) // ← Pasa el valor aquí
   }
 
   const handlePauseResume = () => {

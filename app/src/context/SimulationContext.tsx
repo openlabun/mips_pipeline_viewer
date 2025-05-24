@@ -19,7 +19,7 @@ interface SimulationState {
 }
 
 interface SimulationActions {
-  startSimulation: (submittedInstructions: string[]) => void;
+  startSimulation: (submittedInstructions: string[], isForwarding: boolean) => void;
   resetSimulation: () => void;
   pauseSimulation: () => void;
   resumeSimulation: () => void;
@@ -211,19 +211,21 @@ export function SimulationProvider({ children }: PropsWithChildren) {
     setIsForwarding(false); // ← REINICIAR ESTADO
   }, []);
 
-  const startSimulation = React.useCallback((submittedInstructions: string[]) => {
+  const startSimulation = React.useCallback((submittedInstructions: string[], isForwardingParam: boolean) => {
     clearTimer();
     if (submittedInstructions.length === 0) {
       resetSimulation();
       return;
     }
 
+    setIsForwarding(isForwardingParam); // ← Actualiza el estado global de forwarding
+
     const Instructions: FetchInstruction[] = submittedInstructions
       .map(hexToBinary)
       .map(BinaryToInstruction)
       .filter((inst): inst is FetchInstruction => inst !== null);
 
-    const { pipeline, finalStageInstructions } = calculatePipelineCyclesWithStalls(Instructions, true);
+    const { pipeline, finalStageInstructions } = calculatePipelineCyclesWithStalls(Instructions, isForwardingParam);
     const initialStages: Record<number, number | null> = {};
 
     submittedInstructions.forEach((_, index) => {
