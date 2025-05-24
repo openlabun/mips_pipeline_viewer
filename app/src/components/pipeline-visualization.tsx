@@ -33,6 +33,7 @@ export function PipelineVisualization() {
     isRunning,
     instructionStages, // Use the pre-calculated stages
     isFinished, // Use the finished flag from context
+    forwardingPaths = [],
   } = useSimulationState();
 
   // Use maxCycles for the number of columns if it's calculated, otherwise 0
@@ -42,7 +43,17 @@ export function PipelineVisualization() {
     (_, i) => i + 1
   );
 
-  // if (instructions.length === 0) return null; // Handled in page.tsx
+  const isForwardingCell = (
+    instIndex: number,
+    stageName: string,
+    cycle: number
+  ): boolean => {
+    return forwardingPaths.some(
+      (f) =>
+        (f.toIndex === instIndex && f.stage === stageName) ||
+        (f.fromIndex === instIndex && f.stage === stageName)
+    );
+  };
 
   return (
     <Card className="w-full overflow-hidden">
@@ -101,6 +112,10 @@ export function PipelineVisualization() {
                       isActualCurrentStage && !isRunning && !isFinished;
                     const isPastStage = isInPipelineAtThisCycle && c < cycle;
 
+                    const isForward =
+                      currentStageData &&
+                      isForwardingCell(instIndex, currentStageData.name, c);
+
                     return (
                       <TableCell
                         key={`inst-${instIndex}-cycle-${c}`}
@@ -118,6 +133,8 @@ export function PipelineVisualization() {
                               : "bg-background"
                             : isFinished
                             ? "bg-background"
+                            : isForward
+                            ? "bg-yellow-300 text-yellow-900"
                             : shouldAnimate
                             ? "bg-accent text-accent-foreground animate-pulse-bg"
                             : shouldHighlightStatically
@@ -129,17 +146,13 @@ export function PipelineVisualization() {
                       >
                         {currentStageData && !isFinished && (
                           <div className="flex flex-col items-center justify-center">
-                            {currentStageData && !isFinished && (
-                              <div className="flex flex-col items-center justify-center">
-                                <currentStageData.icon
-                                  className="w-4 h-4 mb-1"
-                                  aria-hidden="true"
-                                />
-                                <span className="text-xs">
-                                  {currentStageData.name}
-                                </span>
-                              </div>
-                            )}
+                            <currentStageData.icon
+                              className="w-4 h-4 mb-1"
+                              aria-hidden="true"
+                            />
+                            <span className="text-xs">
+                              {currentStageData.name}
+                            </span>
                           </div>
                         )}
                       </TableCell>

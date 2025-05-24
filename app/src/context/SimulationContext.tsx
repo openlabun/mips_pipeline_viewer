@@ -18,6 +18,7 @@ interface SimulationState {
   // Map instruction index to its current stage index (0-based) or null if not started/finished
   instructionStages: Record<number, number | null>;
   isFinished: boolean; // Track if simulation completed
+  forwardingPaths?: { fromIndex: number; toIndex: number; stage: string }[];
 }
 
 // Define the shape of the context actions
@@ -47,6 +48,7 @@ const SimulationActionsContext = React.createContext<
 const DEFAULT_STAGE_COUNT = STAGE_NAMES.length; // Use length of defined stages
 let sw: number = 0; // Valida si una instruccion es store o load para la deteccion de hazards
 let lw: number = 0;
+let fw: number = 0; //Valida si se debe insertar un stall (0) o no porque se hara un forward (1)
 const initialState: SimulationState = {
   instructions: [],
   currentCycle: 0,
@@ -55,6 +57,7 @@ const initialState: SimulationState = {
   stageCount: DEFAULT_STAGE_COUNT,
   instructionStages: {},
   isFinished: false,
+  forwardingPaths: [],
 };
 
 // Function to calculate the next state based on the current state
@@ -99,55 +102,34 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
     instrIF: DecodedInstruction,
     instrID: DecodedInstruction
   ): boolean => {
-    if (instrIF?.opcode === "101011") {
-      sw = 1;
-    } else {
-      sw = 0;
-    }
-    if (instrID?.opcode === "100011") {
-      lw = 1;
-    } else {
-      lw = 0;
-    }
+    const sw = instrIF.opcode === "101011" ? 1 : 0;
+    const lw = instrID.opcode === "100011" ? 1 : 0;
+
     if (instrIF.type === "R") {
       if (instrID.type === "R") {
-        if (instrIF.rs === instrID.rd || instrIF.rt === instrID.rd) {
-          return true;
-        }
+        if (instrIF.rs === instrID.rd || instrIF.rt === instrID.rd) return true;
         if (
           (lw === 1 && instrIF.rs === instrID.rt) ||
           instrIF.rt === instrID.rt
-        ) {
+        )
           return true;
-        }
       } else {
-        if (instrIF.rs === instrID.rd || instrIF.rt === instrID.rt) {
-          return true;
-        }
-        if (lw === 1 && instrIF.rs === instrID.rt) {
-          return true;
-        }
+        if (instrIF.rs === instrID.rd || instrIF.rt === instrID.rt) return true;
+        if (lw === 1 && instrIF.rs === instrID.rt) return true;
       }
     } else {
       if (instrID.type === "R") {
-        if (instrIF.rs === instrID.rd) {
-          return true;
-        }
-        if (sw === 1 && instrIF.rt === instrID.rd) {
-          return true;
-        }
+        if (instrIF.rs === instrID.rd) return true;
+        if (sw === 1 && instrIF.rt === instrID.rd) return true;
       } else {
-        if (instrIF.rs === instrID.rt) {
-          return true;
-        }
-        if (sw === 1 && instrIF.rt === instrID.rt) {
-          return true;
-        }
+        if (instrIF.rs === instrID.rt) return true;
+        if (sw === 1 && instrIF.rt === instrID.rt) return true;
       }
     }
     return false;
   };
 
+  // Hazard + stall detection
   for (let i = 1; i < currentState.instructions.length; i++) {
     const stageIF = currentState.instructionStages[i];
     const stageID = currentState.instructionStages[i - 1];
@@ -156,38 +138,18 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
       const instrIF = decodeInstruction(currentState.instructions[i]);
       const instrID = decodeInstruction(currentState.instructions[i - 1]);
       if (instrIF && instrID) {
-        console.log(instrIF);
-        console.log(instrID);
-        console.log("El opcode en la mesa IF es: ", instrIF?.opcode);
-        console.log("El opcode en la mesa ID es: ", instrID?.opcode);
         const isStore = instrIF.opcode === "101011";
         const isLoad = instrID.opcode === "100011";
         if (hasHazard(instrIF, instrID) && (isStore || isLoad)) {
-          console.log("El estado del hazard es: ", hasHazard(instrIF, instrID));
           newInstructions.splice(i, 0, "STALL");
           insertedStall = true;
           break;
-        } else {
-          console.log("El estado del hazard es: false");
-        }
-      }
-      const instrEX = decodeInstruction(currentState.instructions[i - 2]);
-      if (instrEX) {
-        const instrMEM = decodeInstruction(currentState.instructions[i - 3]);
-        if (instrMEM && hasHazard(instrEX, instrMEM)) {
-          console.log("El forward viene de la mesa MEM");
-        } else {
-          const instrWB = decodeInstruction(currentState.instructions[i - 4]);
-          if (instrWB && hasHazard(instrEX, instrWB)) {
-            console.log("El forward viene de la mesa WB");
-          } else{
-            console.log("El forward viene de la mesa ID");
-          }
         }
       }
     }
   }
 
+  // Avance de instrucciones
   let newIndex = 0;
   for (let i = 0; i < newInstructions.length; i++) {
     const stageIndex = nextCycle - newIndex - 1;
@@ -197,6 +159,51 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
       newInstructionStages[i] = null;
     }
     newIndex++;
+  }
+
+  // Detección de forwarding en mismo ciclo (ciclo actual)
+  const forwardingPaths: {
+    fromIndex: number;
+    toIndex: number;
+    stage: string;
+  }[] = [];
+
+  const stageNames = ["IF", "ID", "EX", "MEM", "WB"];
+
+  for (let toIndex = 0; toIndex < newInstructions.length; toIndex++) {
+    const toInstr = decodeInstruction(newInstructions[toIndex]);
+    const toStage = newInstructionStages[toIndex];
+    if (!toInstr || newInstructions[toIndex] === "STALL" || toStage !== 1)
+      continue;
+
+    const neededRegs = [toInstr.rs, toInstr.rt];
+
+    for (let fromIndex = 0; fromIndex < newInstructions.length; fromIndex++) {
+      if (fromIndex === toIndex) continue;
+
+      const fromInstr = decodeInstruction(newInstructions[fromIndex]);
+      const fromStage = newInstructionStages[fromIndex];
+
+      if (
+        !fromInstr ||
+        newInstructions[fromIndex] === "STALL" ||
+        fromStage === null
+      )
+        continue;
+
+      const producedReg = fromInstr.type === "R" ? fromInstr.rd : fromInstr.rt;
+
+      if (!neededRegs.includes(producedReg)) continue;
+
+      if ([2, 3, 4].includes(fromStage)) {
+        const stageName = stageNames[fromStage];
+        forwardingPaths.push({
+          fromIndex,
+          toIndex,
+          stage: stageName, // Cambiado de fromStage a stage
+        });
+      }
+    }
   }
 
   const longestPath = newInstructions.length + DEFAULT_STAGE_COUNT - 1;
@@ -212,6 +219,7 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
     isRunning,
     isFinished,
     maxCycles: newMaxCycles,
+    forwardingPaths,
   };
 };
 
