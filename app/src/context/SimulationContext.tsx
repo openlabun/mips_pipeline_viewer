@@ -1,8 +1,9 @@
 // src/context/SimulationContext.tsx
 "use client";
 
-import type { PropsWithChildren } from "react";
-import * as React from "react";
+import type { PropsWithChildren } from 'react';
+import * as React from 'react';
+import { hexToBinary, BinaryToInstruction, FetchInstruction } from '../utils/InstructionFetch'; // Import the hexToBinary function
 
 const STAGE_NAMES = ["IF", "ID", "EX", "MEM", "WB"] as const;
 type StageName = typeof STAGE_NAMES[number];
@@ -14,7 +15,8 @@ interface SimulationState {
   isRunning: boolean;
   stageCount: number;
   instructionStages: Record<number, number | null>;
-  isFinished: boolean;
+  isFinished: boolean; // Track if simulation completed
+  pipelineHistory: (FetchInstruction | null)[][];
 }
 
 interface SimulationActions {
@@ -43,8 +45,108 @@ const initialState: SimulationState = {
   stageCount: DEFAULT_STAGE_COUNT,
   instructionStages: {},
   isFinished: false,
+  pipelineHistory: []
 };
 
+function calculatePipelineCyclesWithStalls(
+  instructions: FetchInstruction[]
+): { pipeline: (FetchInstruction | null)[][]; finalStageInstructions: string[] } {
+  const stageCount = DEFAULT_STAGE_COUNT;
+  const pipeline: (FetchInstruction | null)[][] = [];
+  const finalStageInstructions: string[] = [];
+
+  const queue = [...instructions];
+  const currentStage: (FetchInstruction | null)[] = Array(stageCount).fill(null);
+  const stall: FetchInstruction = { instruction: 'STALL', opcode: '111111', RegWrite: false };
+
+  const getReg = (inst: any, reg: 'rs' | 'rt' | 'rd') =>
+    inst && inst[reg] ? inst[reg] : null;
+  const getRegWrite = (inst: any) =>
+    typeof inst?.RegWrite === 'boolean' ? inst.RegWrite : false;
+
+  while (true) {
+    let hazardDetection: 'EX' | 'MEM' | null = null;
+    const ifId = currentStage[0];
+    const idEx = currentStage[1];
+    const exMem = currentStage[2];
+    const memWb = currentStage[3];
+
+    if (ifId && ifId.instruction !== 'STALL') {
+      const rs = getReg(ifId, 'rs');
+      const rt = getReg(ifId, 'rt');
+
+      if (
+        idEx &&
+        idEx.instruction !== 'STALL' &&
+        getRegWrite(idEx) &&
+        getReg(idEx, 'rd') &&
+        getReg(idEx, 'rd') !== '00000' &&
+        (getReg(idEx, 'rd') === rs || getReg(idEx, 'rd') === rt)
+      ) {
+        hazardDetection = 'EX';
+      }
+
+      if (
+        (exMem &&
+          exMem.instruction !== 'STALL' &&
+          getRegWrite(exMem) &&
+          getReg(exMem, 'rd') &&
+          getReg(exMem, 'rd') !== '00000' &&
+          (getReg(exMem, 'rd') === rs || getReg(exMem, 'rd') === rt)) ||
+        (memWb &&
+          memWb.instruction !== 'STALL' &&
+          getRegWrite(memWb) &&
+          getReg(memWb, 'rd') &&
+          getReg(memWb, 'rd') !== '00000' &&
+          (getReg(memWb, 'rd') === rs || getReg(memWb, 'rd') === rt))
+      ) {
+        hazardDetection = 'MEM';
+      }
+    }
+
+    const stageCalc =
+      hazardDetection === 'EX'
+        ? stageCount - 4
+        : hazardDetection === 'MEM'
+        ? stageCount - 3
+        : 0;
+
+    for (let i = stageCount - 1; i > stageCalc; i--) {
+      currentStage[i] = currentStage[i - 1];
+    }
+
+    switch (hazardDetection) {
+      case 'EX':
+        currentStage[1] = stall;
+        break;
+      case 'MEM':
+        currentStage[2] = stall;
+        break;
+      default:
+        currentStage[0] = queue.length > 0 ? queue.shift()! : null;
+        break;
+    }
+
+    // Verificar si ya no hay instrucciones y el pipeline está vacío antes de guardar estado
+    if (queue.length === 0 && currentStage.every(stage => stage === null)) {
+      break;
+    }
+
+    // Guardar instrucción que sale del pipeline (WB)
+    const exiting = currentStage[stageCount - 1];
+    if (exiting !== null) {
+      finalStageInstructions.push(exiting.instruction);
+    }
+
+    // Guardar el estado del pipeline
+    pipeline.push([...currentStage]);
+  }
+
+  return { pipeline, finalStageInstructions };
+}
+
+
+// Function to calculate the next state based on the current state
 const calculateNextState = (currentState: SimulationState): SimulationState => {
   if (!currentState.isRunning || currentState.isFinished) {
     return currentState;
@@ -64,10 +166,10 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
     }
   });
 
-  const completionCycle =
-    currentState.instructions.length > 0
-      ? currentState.instructions.length + currentState.stageCount - 1
-      : 0;
+  // The simulation completes *after* the last instruction finishes the last stage
+  const completionCycle = currentState.instructions.length > 0
+    ? currentState.maxCycles
+    : 0;
 
   const isFinished = nextCycle > completionCycle;
   const isRunning = !isFinished;
@@ -113,21 +215,28 @@ export function SimulationProvider({ children }: PropsWithChildren) {
     setSimulationState(initialState);
   }, []);
 
-  const startSimulation = React.useCallback(
-    (submittedInstructions: string[]) => {
-      clearTimer();
-      if (submittedInstructions.length === 0) {
-        resetSimulation();
-        return;
-      }
 
-      const calculatedMaxCycles = submittedInstructions.length + DEFAULT_STAGE_COUNT - 1;
-      const initialStages: Record<number, number | null> = {};
-      submittedInstructions.forEach((_, index) => {
-        const stageIndex = 1 - index - 1;
-        initialStages[index] = stageIndex >= 0 && stageIndex < DEFAULT_STAGE_COUNT ? stageIndex : null;
-      });
+  const startSimulation = React.useCallback((submittedInstructions: string[]) => {
+    clearTimer(); // Clear previous timer just in case
+    if (submittedInstructions.length === 0) { 
+      resetSimulation(); // Reset if no instructions submitted
+      return;
+    }
 
+    const Instructions: FetchInstruction[] = submittedInstructions.map(hexToBinary).map(BinaryToInstruction).filter((inst): inst is FetchInstruction => inst !== null);
+    const {pipeline,finalStageInstructions} = calculatePipelineCyclesWithStalls(Instructions);
+    console.log('finalStageInstructions', finalStageInstructions);
+    const initialStages: Record<number, number | null> = {};
+    // Initialize stages for cycle 1
+    submittedInstructions.forEach((_, index) => {
+        const stageIndex = 1 - index - 1; // Calculate stage for cycle 1
+        if (stageIndex >= 0 && stageIndex < DEFAULT_STAGE_COUNT) {
+            initialStages[index] = stageIndex;
+        } else {
+            initialStages[index] = null;
+        }
+    });
+    
       setSimulationState({
         instructions: submittedInstructions,
         currentCycle: 1,
@@ -141,13 +250,15 @@ export function SimulationProvider({ children }: PropsWithChildren) {
     [resetSimulation]
   );
 
-  const pauseSimulation = () => {
-    setSimulationState((prevState) => {
-      if (prevState.isRunning) {
-        clearTimer();
-        return { ...prevState, isRunning: false };
-      }
-      return prevState;
+    setSimulationState({
+      instructions: finalStageInstructions,
+      currentCycle: 1, // Start from cycle 1
+      maxCycles: pipeline.length,
+      isRunning: true,
+      stageCount: DEFAULT_STAGE_COUNT,
+      instructionStages: initialStages, // Set initial stages for cycle 1
+      isFinished: false,
+      pipelineHistory: pipeline // Store the pipeline history
     });
   };
 
