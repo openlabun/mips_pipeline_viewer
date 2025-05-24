@@ -21,8 +21,7 @@ const STAGES = [
   { name: 'ID', icon: Code2 },
   { name: 'EX', icon: Cpu },
   { name: 'MEM', icon: MemoryStick },
-  { name: 'WB', icon: CheckSquare },
-  //{ name: 'Stall', icon: Cloud },
+  { name: 'WB', icon: CheckSquare }
 ] as const;
 
 export function PipelineVisualization() {
@@ -67,54 +66,60 @@ export function PipelineVisualization() {
             <TableBody>
               {instructions.map((inst, instIndex) => (
                 <TableRow key={`inst-${instIndex}`}>
-                   {/* Use bg-card for sticky instruction cell background */}
                   <TableCell className="font-mono sticky left-0 bg-card z-10 border-r">
                     {inst}
                   </TableCell>
                   {cycleNumbers.map((c) => {
-                    // Determine the stage for this instruction *at this cycle column 'c'*
-                    // Instruction 'instIndex' entered stage 's' at cycle 'instIndex + s + 1'
-                    // So, at cycle 'c', the stage index is 'c - instIndex - 1'
                     const expectedStageIndex = c - instIndex - 1;
-                    const currentStageIndex = instructionStages[instIndex]; // Get the actual stage from context for the *current* cycle
-
+                    const currentStageIndex = instructionStages[instIndex];
                     const isInPipelineAtThisCycle = expectedStageIndex >= 0 && expectedStageIndex < STAGES.length;
                     const currentStageData = isInPipelineAtThisCycle ? STAGES[expectedStageIndex] : null;
-
-                    // Is this cell representing the instruction's *actual* current stage in the *current* simulation cycle?
                     const isActualCurrentStage = currentStageIndex !== null && expectedStageIndex === currentStageIndex && c === cycle;
+                    const shouldAnimate = isActualCurrentStage && isRunning && !isFinished;
+                    const shouldHighlightStatically = isActualCurrentStage && !isRunning && !isFinished;
+                    const isPastStage = isInPipelineAtThisCycle && c < cycle;
 
-                     // Only animate if the simulation is running AND not yet completed
-                     const shouldAnimate = isActualCurrentStage && isRunning && !isFinished;
-                     // Highlight statically if it's the current stage but paused/stopped (and not completed)
-                     const shouldHighlightStatically = isActualCurrentStage && !isRunning && !isFinished;
-                     // Mark past stages
-                     const isPastStage = isInPipelineAtThisCycle && c < cycle;
+                    // --- NUEVO: lógica para STALL ---
+                    let cellContent = null;
+                    if (inst === "STALL" && currentStageData) {
+                      cellContent = (
+                        <div className="flex flex-col items-center justify-center">
+                          {currentStageData.name === "IF" ? (
+                            <>
+                              <Download className="w-4 h-4 mb-1" aria-hidden="true" />
+                              <span className="text-xs">{currentStageData.name}</span>
+                            </>
+                          ) : (
+                            <>
+                              <Cloud className="w-4 h-4 mb-1" aria-hidden="true" />
+                              <span className="text-xs">STALL</span>
+                            </>
+                          )}
+                        </div>
+                      );
+                    } else if (currentStageData && !isFinished) {
+                      cellContent = (
+                        <div className="flex flex-col items-center justify-center">
+                          <currentStageData.icon className="w-4 h-4 mb-1" aria-hidden="true" />
+                          <span className="text-xs">{currentStageData.name}</span>
+                        </div>
+                      );
+                    }
+                    // --- FIN NUEVO ---
 
                     return (
                       <TableCell
                         key={`inst-${instIndex}-cycle-${c}`}
                         className={cn(
                           'text-center w-16 h-14 transition-colors duration-300',
-                          // 1. If simulation is completed, reset all cells to default background
                           isFinished ? 'bg-background' :
-                          // 2. If it's the current stage and running, animate
                           shouldAnimate ? 'bg-accent text-accent-foreground animate-pulse-bg' :
-                          // 3. If it's the current stage but paused/stopped, highlight statically
                           shouldHighlightStatically ? 'bg-accent text-accent-foreground' :
-                          // 4. If it's a past stage in the pipeline (and not current/finished), use secondary
                           isPastStage ? 'bg-secondary text-secondary-foreground' :
-                          // 5. Otherwise (future stage or empty cell), use default background
                           'bg-background'
                         )}
                       >
-                        {/* Show icon/name if the stage should be active in this cycle column AND simulation is not completed */}
-                        {currentStageData && !isFinished && (
-                           <div className="flex flex-col items-center justify-center">
-                             <currentStageData.icon className="w-4 h-4 mb-1" aria-hidden="true" />
-                             <span className="text-xs">{currentStageData.name}</span>
-                           </div>
-                         )}
+                        {cellContent}
                       </TableCell>
                     );
                   })}
