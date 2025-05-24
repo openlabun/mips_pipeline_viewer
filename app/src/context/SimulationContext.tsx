@@ -1,9 +1,8 @@
-// src/context/SimulationContext.tsx
 "use client";
 
 import type { PropsWithChildren } from 'react';
 import * as React from 'react';
-import { hexToBinary, BinaryToInstruction, FetchInstruction } from '../utils/InstructionFetch'; // Import the hexToBinary function
+import { hexToBinary, BinaryToInstruction, FetchInstruction } from '../utils/InstructionFetch';
 
 const STAGE_NAMES = ["IF", "ID", "EX", "MEM", "WB"] as const;
 type StageName = typeof STAGE_NAMES[number];
@@ -15,7 +14,7 @@ interface SimulationState {
   isRunning: boolean;
   stageCount: number;
   instructionStages: Record<number, number | null>;
-  isFinished: boolean; // Track if simulation completed
+  isFinished: boolean;
   pipelineHistory: (FetchInstruction | null)[][];
 }
 
@@ -127,26 +126,21 @@ function calculatePipelineCyclesWithStalls(
         break;
     }
 
-    // Verificar si ya no hay instrucciones y el pipeline está vacío antes de guardar estado
     if (queue.length === 0 && currentStage.every(stage => stage === null)) {
       break;
     }
 
-    // Guardar instrucción que sale del pipeline (WB)
     const exiting = currentStage[stageCount - 1];
     if (exiting !== null) {
       finalStageInstructions.push(exiting.instruction);
     }
 
-    // Guardar el estado del pipeline
     pipeline.push([...currentStage]);
   }
 
   return { pipeline, finalStageInstructions };
 }
 
-
-// Function to calculate the next state based on the current state
 const calculateNextState = (currentState: SimulationState): SimulationState => {
   if (!currentState.isRunning || currentState.isFinished) {
     return currentState;
@@ -166,7 +160,6 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
     }
   });
 
-  // The simulation completes *after* the last instruction finishes the last stage
   const completionCycle = currentState.instructions.length > 0
     ? currentState.maxCycles
     : 0;
@@ -185,7 +178,7 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
 
 export function SimulationProvider({ children }: PropsWithChildren) {
   const [simulationState, setSimulationState] = React.useState<SimulationState>(initialState);
-  const [isForwarding, setIsForwarding] = React.useState<boolean>(false); // NUEVO ESTADO
+  const [isForwarding, setIsForwarding] = React.useState<boolean>(false);
   const intervalRef = React.useRef<NodeJS.Timeout | null>(null);
 
   const clearTimer = () => {
@@ -213,55 +206,51 @@ export function SimulationProvider({ children }: PropsWithChildren) {
   const resetSimulation = React.useCallback(() => {
     clearTimer();
     setSimulationState(initialState);
+    setIsForwarding(false); // ← REINICIAR ESTADO
   }, []);
 
-
   const startSimulation = React.useCallback((submittedInstructions: string[]) => {
-    clearTimer(); // Clear previous timer just in case
-    if (submittedInstructions.length === 0) { 
-      resetSimulation(); // Reset if no instructions submitted
+    clearTimer();
+    if (submittedInstructions.length === 0) {
+      resetSimulation();
       return;
     }
 
-    const Instructions: FetchInstruction[] = submittedInstructions.map(hexToBinary).map(BinaryToInstruction).filter((inst): inst is FetchInstruction => inst !== null);
-    const {pipeline,finalStageInstructions} = calculatePipelineCyclesWithStalls(Instructions);
-    console.log('finalStageInstructions', finalStageInstructions);
+    const Instructions: FetchInstruction[] = submittedInstructions
+      .map(hexToBinary)
+      .map(BinaryToInstruction)
+      .filter((inst): inst is FetchInstruction => inst !== null);
+
+    const { pipeline, finalStageInstructions } = calculatePipelineCyclesWithStalls(Instructions);
     const initialStages: Record<number, number | null> = {};
-    // Initialize stages for cycle 1
+
     submittedInstructions.forEach((_, index) => {
-        const stageIndex = 1 - index - 1; // Calculate stage for cycle 1
-        if (stageIndex >= 0 && stageIndex < DEFAULT_STAGE_COUNT) {
-            initialStages[index] = stageIndex;
-        } else {
-            initialStages[index] = null;
-        }
+      const stageIndex = 1 - index - 1;
+      initialStages[index] = stageIndex >= 0 && stageIndex < DEFAULT_STAGE_COUNT ? stageIndex : null;
     });
-    
-      setSimulationState({
-        instructions: submittedInstructions,
-        currentCycle: 1,
-        maxCycles: calculatedMaxCycles,
-        isRunning: true,
-        stageCount: DEFAULT_STAGE_COUNT,
-        instructionStages: initialStages,
-        isFinished: false,
-      });
-    },
-    [resetSimulation]
-  );
 
     setSimulationState({
       instructions: finalStageInstructions,
-      currentCycle: 1, // Start from cycle 1
+      currentCycle: 1,
       maxCycles: pipeline.length,
       isRunning: true,
       stageCount: DEFAULT_STAGE_COUNT,
-      instructionStages: initialStages, // Set initial stages for cycle 1
+      instructionStages: initialStages,
       isFinished: false,
-      pipelineHistory: pipeline // Store the pipeline history
+      pipelineHistory: pipeline
+    });
+  }, [resetSimulation]);
+
+  const pauseSimulation = () => {
+    setSimulationState((prevState) => {
+      if (prevState.isRunning) {
+        clearTimer();
+        return { ...prevState, isRunning: false };
+      }
+      return prevState;
     });
   };
-
+  
   const resumeSimulation = () => {
     setSimulationState((prevState) => {
       if (!prevState.isRunning && prevState.currentCycle > 0 && !prevState.isFinished) {
@@ -280,23 +269,15 @@ export function SimulationProvider({ children }: PropsWithChildren) {
     return clearTimer;
   }, [simulationState.isRunning, simulationState.isFinished, runClock]);
 
-  const toggleForwarding = () => setIsForwarding((prev) => !prev); // NUEVA FUNCIÓN
+  const toggleForwarding = () => setIsForwarding(prev => !prev);
 
   return (
     <SimulationStateContext.Provider value={simulationState}>
       <SimulationActionsContext.Provider
-        value={{
-          startSimulation,
-          resetSimulation,
-          pauseSimulation,
-          resumeSimulation,
-        }}
+        value={{ startSimulation, resetSimulation, pauseSimulation, resumeSimulation }}
       >
         <SimulationForwardingContext.Provider
-          value={{
-            isForwarding,
-            toggleForwarding,
-          }}
+          value={{ isForwarding, toggleForwarding }}
         >
           {children}
         </SimulationForwardingContext.Provider>
@@ -322,7 +303,6 @@ export function useSimulationActions() {
   return context;
 }
 
-// NUEVO HOOK
 export function useSimulationForwarding() {
   const context = React.useContext(SimulationForwardingContext);
   if (context === undefined) {
