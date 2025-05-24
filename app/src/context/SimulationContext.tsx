@@ -31,6 +31,7 @@ interface SimulationState {
   instructionStages: Record<number, number | null>;
   isFinished: boolean; // Track if simulation completed
   mode: SimulationMode;
+  stageHistory?: Record<number, Record<number, number | null>>; // ciclo -> {instIndex: stageIndex}
 }
 
 // Define the shape of the context actions
@@ -56,7 +57,8 @@ const initialState: SimulationState = {
   stageCount: DEFAULT_STAGE_COUNT,
   instructionStages: {},
   isFinished: false,
-  mode: 'default'  // <-- NUEVA PROP
+  mode: 'default',  // <-- NUEVA PROP
+  stageHistory: {},
 };
 
 // Function to calculate the next state based on the current state
@@ -69,8 +71,8 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
     case 'stall':
       // console.log('Stall mode');
       return calculateStallNextState(currentState);
-   // case 'forward':
-     // return calculateForwardNextState(currentState);
+   case 'forward':
+      return calculateForwardNextState(currentState);
     case 'default':
     default:
       return calculateDefaultNextState(currentState);
@@ -119,12 +121,13 @@ function calculateDefaultNextState(currentState: SimulationState): SimulationSta
 function calculateStallNextState(currentState: SimulationState): SimulationState {
   const nextCycle = currentState.currentCycle + 1;
   const newInstructionStages: Record<number, number | null> = {};
+  let exOccupied = false;
+  let idBlocked = false; // Nueva bandera para bloquear ID
 
   function hasRAWDependency(currIdx: number): boolean {
     const currInstr = currentState.decodedInstructions[currIdx];
     if (!currInstr) return false;
     if (currentState.instructionStages[currIdx] !== 1) return false;
-
     for (let prevIdx = 0; prevIdx < currIdx; prevIdx++) {
       const prevInstr = currentState.decodedInstructions[prevIdx];
       const prevStage = currentState.instructionStages[prevIdx];
@@ -161,13 +164,18 @@ function calculateStallNextState(currentState: SimulationState): SimulationState
       continue;
     }
 
-    // Si está en ID y hay dependencia, stall SOLO esa instrucción
-    if (
-      prevStage === 1 && // ID
-      hasRAWDependency(i)
-    ) {
-      console.log(`Stall insertado en ciclo ${nextCycle} para instrucción ${i}`);
-      newInstructionStages[i] = 1; // Stall en ID
+    if (prevStage === 1) {
+      if (idBlocked) {
+        newInstructionStages[i] = 1; // Bloqueada por una anterior en ID
+      } else if (hasRAWDependency(i)) {
+        newInstructionStages[i] = 1; // Stall en ID
+        idBlocked = true; // Bloquea a las siguientes
+      } else if (!exOccupied) {
+        newInstructionStages[i] = 2; // Avanza a EX
+        exOccupied = true;
+      } else {
+        newInstructionStages[i] = 1; // EX ya ocupado, espera en ID
+      }
     } else if (prevStage !== null && prevStage < currentState.stageCount - 1) {
       newInstructionStages[i] = prevStage + 1;
     } else {
@@ -186,6 +194,95 @@ function calculateStallNextState(currentState: SimulationState): SimulationState
   return {
     ...currentState,
     currentCycle: isFinished ? completionCycle : nextCycle,
+    instructionStages: newInstructionStages,
+    isRunning,
+    isFinished,
+  };
+}
+
+function calculateForwardNextState(currentState: SimulationState): SimulationState {
+  const nextCycle = currentState.currentCycle + 1;
+  const newInstructionStages: Record<number, number | null> = {};
+  let exOccupied = false;
+  let idBlocked = false; // Nueva bandera para bloquear ID
+
+  function hasRAWDependencyWithForwarding(currIdx: number): boolean {
+    const currInstr = currentState.decodedInstructions[currIdx];
+    if (!currInstr) return false;
+    if (currentState.instructionStages[currIdx] !== 1) return false;
+
+    for (let prevIdx = 0; prevIdx < currIdx; prevIdx++) {
+      const prevInstr = currentState.decodedInstructions[prevIdx];
+      const prevStage = currentState.instructionStages[prevIdx];
+      if (prevStage === null) continue;
+
+      let prevDest: number | undefined = undefined;
+      let isLoad = false;
+      if (prevInstr.format === 'R') prevDest = prevInstr.rd;
+      if (prevInstr.format === 'I') {
+        prevDest = prevInstr.rt;
+        isLoad = prevInstr.opcode === 35; // lw opcode
+      }
+
+      const currSources = [currInstr.rs, currInstr.rt].filter(x => x !== undefined);
+
+      if (
+        prevDest !== undefined &&
+        currSources.includes(prevDest)
+      ) {
+        // Si la previa es load y está en EX o MEM, stall
+        if (isLoad && [2, 3].includes(prevStage)) {
+          console.log(
+            `Stall (forwarding): instr ${currIdx} (ID) depende de LOAD instr ${prevIdx} (stage ${prevStage})`
+          );
+          return true;
+        }
+        // Si la previa es ALU y está en EX, stall
+        if (!isLoad && prevStage === 2) {
+          console.log(
+            `Stall (forwarding): instr ${currIdx} (ID) depende de ALU instr ${prevIdx} (stage ${prevStage})`
+          );
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  for (let i = 0; i < currentState.instructions.length; i++) {
+    const prevStage = currentState.instructionStages[i];
+    if (prevStage === null) {
+      const stageIndex = nextCycle - i - 1;
+      newInstructionStages[i] = stageIndex >= 0 && stageIndex < currentState.stageCount ? stageIndex : null;
+      continue;
+    }
+
+    if (prevStage === 1) {
+      if (idBlocked) {
+        newInstructionStages[i] = 1; // Bloqueada por una anterior en ID
+      } else if (hasRAWDependencyWithForwarding(i)) {
+        newInstructionStages[i] = 1; // Stall en ID
+        idBlocked = true; // Bloquea a las siguientes
+      } else if (!exOccupied) {
+        newInstructionStages[i] = 2; // Avanza a EX
+        exOccupied = true;
+      } else {
+        newInstructionStages[i] = 1; // EX ya ocupado, espera en ID
+      }
+    } else if (prevStage !== null && prevStage < currentState.stageCount - 1) {
+      newInstructionStages[i] = prevStage + 1;
+    } else {
+      newInstructionStages[i] = null;
+    }
+  }
+
+  const allInstructionsFinished = Object.values(newInstructionStages).every(stage => stage === null);
+  const isFinished = allInstructionsFinished;
+  const isRunning = !isFinished;
+  console.log(`Ciclo ${nextCycle} (forwarding):`, newInstructionStages);
+  return {
+    ...currentState,
+    currentCycle: isFinished ? currentState.currentCycle : nextCycle,
     instructionStages: newInstructionStages,
     isRunning,
     isFinished,
@@ -211,11 +308,17 @@ export function SimulationProvider({ children }: PropsWithChildren) {
     intervalRef.current = setInterval(() => {
       setSimulationState((prevState) => {
         const nextState = calculateNextState(prevState);
+
+        const nextCycle = nextState.currentCycle;
+        const newHistory = { ...(prevState.stageHistory || {}) };
+        newHistory[nextCycle] = { ...nextState.instructionStages };
+
         // Check if the simulation just finished in this step
         if (nextState.isFinished && !prevState.isFinished) {
            clearTimer(); // Stop the clock immediately
         }
-        return nextState;
+        return {...nextState,stageHistory: newHistory,
+        }
       });
     }, 1000); // Advance cycle every 1 second
   }, [simulationState.isRunning, simulationState.isFinished]); // Dependencies
@@ -223,7 +326,7 @@ export function SimulationProvider({ children }: PropsWithChildren) {
 
   const resetSimulation = React.useCallback(() => {
     clearTimer();
-    setSimulationState(initialState);
+    setSimulationState({ ...initialState, stageHistory: {} });
   }, []);
 
   const startSimulation = React.useCallback((submittedInstructions: string[], mode: SimulationMode) => {
@@ -259,6 +362,7 @@ export function SimulationProvider({ children }: PropsWithChildren) {
       instructionStages: initialStages, // Set initial stages for cycle 1
       isFinished: false,
       mode,
+      stageHistory: { 1: { ...initialStages } },
     });
     // runClock will be triggered by the useEffect below when isRunning becomes true
   }, [resetSimulation]);
