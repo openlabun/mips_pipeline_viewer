@@ -12,7 +12,7 @@ import {
   TableCaption,
 } from '@/components/ui/table';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Download, Code2, Cpu, MemoryStick, CheckSquare } from 'lucide-react';
+import { Download, Code2, Cpu, MemoryStick, CheckSquare, Cloud} from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useSimulationState } from '@/context/SimulationContext'; // Import context hook
 
@@ -22,6 +22,7 @@ const STAGES = [
   { name: 'EX', icon: Cpu },
   { name: 'MEM', icon: MemoryStick },
   { name: 'WB', icon: CheckSquare },
+  //{ name: 'Stall', icon: Cloud },
 ] as const;
 
 export function PipelineVisualization() {
@@ -33,6 +34,7 @@ export function PipelineVisualization() {
     isRunning,
     instructionStages, // Use the pre-calculated stages
     isFinished, // Use the finished flag from context
+    pipelineHistory
   } = useSimulationState();
 
 
