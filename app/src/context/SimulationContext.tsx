@@ -47,9 +47,7 @@ const initialState: SimulationState = {
   pipelineHistory: []
 };
 
-function calculatePipelineCyclesWithStalls(
-  instructions: FetchInstruction[]
-): { pipeline: (FetchInstruction | null)[][]; finalStageInstructions: string[] } {
+function calculatePipelineCyclesWithStalls(instructions: FetchInstruction[], forward: boolean): { pipeline: (FetchInstruction | null)[][]; finalStageInstructions: string[] } {
   const stageCount = DEFAULT_STAGE_COUNT;
   const pipeline: (FetchInstruction | null)[][] = [];
   const finalStageInstructions: string[] = [];
@@ -101,6 +99,10 @@ function calculatePipelineCyclesWithStalls(
       ) {
         hazardDetection = 'MEM';
       }
+    }
+
+    if (forward){
+      hazardDetection = hazardDetection === 'EX' && idEx?.opcode === '100011' ? hazardDetection : null
     }
 
     const stageCalc =
@@ -221,7 +223,7 @@ export function SimulationProvider({ children }: PropsWithChildren) {
       .map(BinaryToInstruction)
       .filter((inst): inst is FetchInstruction => inst !== null);
 
-    const { pipeline, finalStageInstructions } = calculatePipelineCyclesWithStalls(Instructions);
+    const { pipeline, finalStageInstructions } = calculatePipelineCyclesWithStalls(Instructions, true);
     const initialStages: Record<number, number | null> = {};
 
     submittedInstructions.forEach((_, index) => {
