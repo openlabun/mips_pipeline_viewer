@@ -83,7 +83,7 @@ function calculatePipelineCyclesWithStalls(
 
   const queue = [...instructions];
   const currentStage: (FetchInstruction | null)[] = Array(stageCount).fill(null);
-  const stall: FetchInstruction = { instruction: 'STALL', RegWrite: false };
+  const stall: FetchInstruction = { instruction: 'STALL', opcode: '111111', RegWrite: false };
 
   const getReg = (inst: any, reg: 'rs' | 'rt' | 'rd') =>
     inst && inst[reg] ? inst[reg] : null;
@@ -258,7 +258,6 @@ export function SimulationProvider({ children }: PropsWithChildren) {
     const Instructions: FetchInstruction[] = submittedInstructions.map(hexToBinary).map(BinaryToInstruction).filter((inst): inst is FetchInstruction => inst !== null);
     const {pipeline,finalStageInstructions} = calculatePipelineCyclesWithStalls(Instructions);
     console.log('finalStageInstructions', finalStageInstructions);
-    const calculatedMaxCycles = submittedInstructions.length + DEFAULT_STAGE_COUNT - 1;
     const initialStages: Record<number, number | null> = {};
     // Initialize stages for cycle 1
     submittedInstructions.forEach((_, index) => {
@@ -272,7 +271,7 @@ export function SimulationProvider({ children }: PropsWithChildren) {
 
 
     setSimulationState({
-      instructions: submittedInstructions,
+      instructions: finalStageInstructions,
       currentCycle: 1, // Start from cycle 1
       maxCycles: pipeline.length,
       isRunning: true,

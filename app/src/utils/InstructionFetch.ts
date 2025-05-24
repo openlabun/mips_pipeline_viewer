@@ -1,5 +1,6 @@
 type Instruction={
     instruction: string;
+    opcode: string;
 };
 
 type RtypeInstruction= Instruction & {
@@ -50,10 +51,12 @@ function hexToBinary(hex:string): string {
 
 function BinaryToInstruction(binary: string): Instruction | null {
     const opcode = binary.slice(0, 6);
+    const hex = parseInt(binary, 2).toString(16);
     switch(opcode){
         case '000000': //add
             return {
-                instruction: 'R-type',
+                instruction: hex,
+                opcode: opcode,
                 rs: binary.slice(6, 11),
                 rt: binary.slice(11, 16),
                 rd: binary.slice(16, 21),
@@ -61,7 +64,8 @@ function BinaryToInstruction(binary: string): Instruction | null {
             } as RtypeInstruction;
         case '001000': //addi
             return {
-                instruction: 'Addi',
+                instruction: hex,
+                opcode: opcode,
                 rs: binary.slice(6, 11),
                 rd: binary.slice(11, 16),
                 RegWrite: true
@@ -69,7 +73,8 @@ function BinaryToInstruction(binary: string): Instruction | null {
 
         case '100011': //lw
             return {
-                instruction: 'Load',
+                instruction: hex,
+                opcode: opcode,
                 rs: binary.slice(6, 11),
                 rd: binary.slice(11, 16),
                 RegWrite: true
@@ -77,7 +82,8 @@ function BinaryToInstruction(binary: string): Instruction | null {
 
         case '101011': //sw
             return {
-                instruction: 'Store',
+                instruction: hex,
+                opcode: opcode,
                 rs: binary.slice(6, 11),
                 rt: binary.slice(11, 16),
                 RegWrite: false
@@ -85,13 +91,15 @@ function BinaryToInstruction(binary: string): Instruction | null {
         
         case '000100': //beq
             return {
-                instruction: 'Branch',
+                instruction: hex,
+                opcode: opcode,
                 RegWrite: false
             } as BranchInstruction;
 
         case '000010': //j
             return {
-                instruction: 'Jump',
+                instruction: hex,
+                opcode: opcode,
                 RegWrite: false
             } as JumpInstruction;
             
