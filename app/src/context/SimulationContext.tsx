@@ -55,11 +55,9 @@ const calculateMaxCycles = (instructions: string[], mode: SimulationMode, decode
     const currInstr = decoded[i];
     if (!currInstr) continue;
 
-    // Buscar dependencia con la instrucción inmediatamente anterior
     const prevInstr = decoded[i - 1];
     if (!prevInstr) continue;
 
-    // Determinar el registro destino de la instrucción anterior
     let prevDest: number | undefined = undefined;
     let isLoad = false;
 
@@ -70,21 +68,20 @@ const calculateMaxCycles = (instructions: string[], mode: SimulationMode, decode
       isLoad = prevInstr.opcode === 35; 
     }
 
-    // Obtener los registros fuente de la instrucción actual
     const currSources = [currInstr.rs, currInstr.rt].filter(Boolean);
 
-    // Verificar si hay dependencia RAW
+    // Verify if there are raw DEPENDENCES
     if (prevDest && currSources.includes(prevDest)) {
       if (mode === 'stall') {
-        // En modo stall, siempre son 3 ciclos de stall para RAW
+        // stall 3 cycles per stall
         totalStalls += 3;
       } else if (mode === 'forward') {
-        // En modo forwarding, los stalls dependen del tipo de instrucción
+        // stall variable cycles, 2 or 1 depending on forward type
         if (isLoad) {
-          // Load-use hazard: 2 stalls (espera hasta MEM)
+ 
           totalStalls += 2;
         } else {
-          // ALU-use hazard: 1 stall (espera hasta EX)
+
           totalStalls += 1;
         }
       }
