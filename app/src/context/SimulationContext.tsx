@@ -74,22 +74,22 @@ const initialState: SimulationState = {
 
   return pipeline;
 }*/
-
-function calculatePipelineCyclesWithStalls(instructions: FetchInstruction[]): (FetchInstruction | null)[][] {
+function calculatePipelineCyclesWithStalls(
+  instructions: FetchInstruction[]
+): { pipeline: (FetchInstruction | null)[][]; finalStageInstructions: FetchInstruction[] } {
   const stageCount = DEFAULT_STAGE_COUNT;
   const pipeline: (FetchInstruction | null)[][] = [];
+  const finalStageInstructions: FetchInstruction[] = [];
+
   const queue = [...instructions];
   const currentStage: (FetchInstruction | null)[] = Array(stageCount).fill(null);
   const stall: FetchInstruction = { instruction: 'STALL', RegWrite: false };
 
-  // Helper to get register value or null
   const getReg = (inst: any, reg: 'rs' | 'rt' | 'rd') => (inst && inst[reg] ? inst[reg] : null);
-  // Helper to get RegWrite safely
   const getRegWrite = (inst: any) => (typeof inst?.RegWrite === 'boolean' ? inst.RegWrite : false);
 
   while (true) {
-    // Hazard detection (EX and MEM) for the instruction entering ID (currentStage[0] will become currentStage[1])
-    let hazardDetection: 'EX' | 'MEM' | null = null; 
+    let hazardDetection: 'EX' | 'MEM' | null = null;
     const ifId = currentStage[0];
     const idEx = currentStage[1];
     const exMem = currentStage[2];
@@ -98,62 +98,62 @@ function calculatePipelineCyclesWithStalls(instructions: FetchInstruction[]): (F
     if (ifId && ifId.instruction !== 'STALL') {
       const rs = getReg(ifId, 'rs');
       const rt = getReg(ifId, 'rt');
-      // --- EX Hazard ---
+
       if (
         idEx && idEx.instruction !== 'STALL' &&
         getRegWrite(idEx) && getReg(idEx, 'rd') && getReg(idEx, 'rd') !== '00000' &&
-        ((getReg(idEx, 'rd') === rs) || (getReg(idEx, 'rd') === rt))
+        (getReg(idEx, 'rd') === rs || getReg(idEx, 'rd') === rt)
       ) {
         hazardDetection = 'EX';
       }
-      // --- MEM Hazard ---
+
       if (
-        exMem && exMem.instruction !== 'STALL' &&
+        (exMem && exMem.instruction !== 'STALL' &&
         getRegWrite(exMem) && getReg(exMem, 'rd') && getReg(exMem, 'rd') !== '00000' &&
-        ((getReg(exMem, 'rd') === rs) || (getReg(exMem, 'rd') === rt))
-      ) {
-        hazardDetection = 'MEM';
-      }
-      if (
-        memWb && memWb.instruction !== 'STALL' &&
+        (getReg(exMem, 'rd') === rs || getReg(exMem, 'rd') === rt)) ||
+        (memWb && memWb.instruction !== 'STALL' &&
         getRegWrite(memWb) && getReg(memWb, 'rd') && getReg(memWb, 'rd') !== '00000' &&
-        ((getReg(memWb, 'rd') === rs) || (getReg(memWb, 'rd') === rt))
+        (getReg(memWb, 'rd') === rs || getReg(memWb, 'rd') === rt))
       ) {
         hazardDetection = 'MEM';
       }
     }
 
-    const stageCalc = hazardDetection === 'EX' ? stageCount - 4 : 
-                      hazardDetection === 'MEM' ? stageCount - 3 :
-                      0;
-    // Advance pipeline stages
+    const stageCalc = hazardDetection === 'EX' ? stageCount - 4 :
+                      hazardDetection === 'MEM' ? stageCount - 3 : 0;
+
     for (let i = stageCount - 1; i > stageCalc; i--) {
       currentStage[i] = currentStage[i - 1];
     }
-    
-    switch (hazardDetection){
+
+    switch (hazardDetection) {
       case 'EX':
         currentStage[1] = stall;
         break;
-
       case 'MEM':
         currentStage[2] = stall;
         break;
-
       default:
         currentStage[0] = queue.length > 0 ? queue.shift()! : null;
         break;
     }
 
-    // If the pipeline is empty, break
+    // Guardar la instrucción que sale del pipeline (WB)
+    const exiting = currentStage[stageCount - 1];
+    if (exiting !== null) {
+      finalStageInstructions.push(exiting);
+    }
+
+    pipeline.push([...currentStage]);
+
     if (queue.length === 0 && currentStage.every(stage => stage === null)) {
       break;
     }
-    pipeline.push([...currentStage]);
   }
 
-  return pipeline;
+  return { pipeline, finalStageInstructions };
 }
+
 
 // Function to calculate the next state based on the current state
 const calculateNextState = (currentState: SimulationState): SimulationState => {
@@ -239,8 +239,8 @@ export function SimulationProvider({ children }: PropsWithChildren) {
     }
 
     const Instructions: FetchInstruction[] = submittedInstructions.map(hexToBinary).map(BinaryToInstruction).filter((inst): inst is FetchInstruction => inst !== null);
-    const pipeline = calculatePipelineCyclesWithStalls(Instructions);
-
+    const { pipeline, finalStageInstructions } = calculatePipelineCyclesWithStalls(Instructions);
+    console.log('Orden', finalStageInstructions);;
     const calculatedMaxCycles = submittedInstructions.length + DEFAULT_STAGE_COUNT - 1;
     const initialStages: Record<number, number | null> = {};
     // Initialize stages for cycle 1
