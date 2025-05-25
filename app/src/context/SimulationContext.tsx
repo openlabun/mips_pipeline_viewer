@@ -1,19 +1,23 @@
-// app/src/context/SimulationContext.tsx
+// src/context/SimulationContext.tsx
 "use client"; 
 
 import type { PropsWithChildren } from 'react';
 import * as React from 'react';
+// Asegúrate de que la ruta de importación sea correcta según tu estructura de carpetas
+import { decodeInstruction, DecodedInstructionInfo, getDecodedInstructionText } from '@/lib/mips-decoder';
 
 const STAGE_NAMES = ['IF', 'ID', 'EX', 'MEM', 'WB'] as const;
 type StageName = typeof STAGE_NAMES[number];
 
+// 1. Actualiza la interfaz SimulationState
 interface SimulationState {
-  instructions: string[];
+  instructions: string[]; // Instrucciones originales en hexadecimal
+  decodedInstructions: DecodedInstructionInfo[]; // <--- NUEVA PROPIEDAD
   currentCycle: number;
   maxCycles: number;
   isRunning: boolean;
   stageCount: number;
-  instructionStages: Record<number, number | null>;
+  instructionStages: Record<number, number | null>; // Etapa actual (índice) de cada instrucción
   isFinished: boolean;
   forwardingEnabled: boolean;
   stallEnabled: boolean;
@@ -33,18 +37,21 @@ const SimulationActionsContext = React.createContext<SimulationActions | undefin
 
 const DEFAULT_STAGE_COUNT = STAGE_NAMES.length;
 
+// 2. Actualiza initialState
 const initialState: SimulationState = {
   instructions: [],
+  decodedInstructions: [], // <--- INICIALIZAR
   currentCycle: 0,
   maxCycles: 0,
   isRunning: false,
   stageCount: DEFAULT_STAGE_COUNT,
   instructionStages: {},
   isFinished: false,
-  forwardingEnabled: false,
-  stallEnabled: false,
+  forwardingEnabled: false, // Por defecto desactivado
+  stallEnabled: false,     // Por defecto desactivado
 };
 
+// calculateNextState no cambia para ESTE PASO en particular
 const calculateNextState = (currentState: SimulationState): SimulationState => {
   if (!currentState.isRunning || currentState.isFinished) {
     return currentState;
@@ -52,14 +59,14 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
 
   const nextCycle = currentState.currentCycle + 1;
   const newInstructionStages: Record<number, number | null> = {};
-  let activeInstructions = 0;
+  // let activeInstructions = 0; // No se usa actualmente
 
   currentState.instructions.forEach((_, index) => {
     const stageIndex = nextCycle - index - 1;
 
     if (stageIndex >= 0 && stageIndex < currentState.stageCount) {
       newInstructionStages[index] = stageIndex;
-      activeInstructions++;
+      // activeInstructions++; // No se usa actualmente
     } else {
       newInstructionStages[index] = null;
     }
@@ -80,6 +87,7 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
     isFinished: isFinished,
   };
 };
+
 
 export function SimulationProvider({ children }: PropsWithChildren) {
   const [simulationState, setSimulationState] = React.useState<SimulationState>(initialState);
@@ -107,64 +115,89 @@ export function SimulationProvider({ children }: PropsWithChildren) {
     }, 1000);
   }, [simulationState.isRunning, simulationState.isFinished]);
 
+
+  // 3. Modifica resetSimulation para mantener las opciones de forwarding/stall
   const resetSimulation = React.useCallback(() => {
     clearTimer();
-    setSimulationState(initialState);
+    setSimulationState(prevState => ({
+        ...initialState, // Restablece a los valores iniciales por defecto
+        forwardingEnabled: prevState.forwardingEnabled, // Pero mantiene la selección del usuario
+        stallEnabled: prevState.stallEnabled,           // para estas opciones
+      }));
   }, []);
 
+  // 4. Modifica startSimulation
   const startSimulation = React.useCallback((submittedInstructions: string[]) => {
     clearTimer();
     if (submittedInstructions.length === 0) {
-      resetSimulation();
+      // Al resetear con instrucciones vacías, también mantener las opciones
+      setSimulationState(prevState => ({
+        ...initialState,
+        forwardingEnabled: prevState.forwardingEnabled,
+        stallEnabled: prevState.stallEnabled,
+      }));
       return;
     }
 
-    const calculatedMaxCycles = submittedInstructions.length + DEFAULT_STAGE_COUNT - 1;
-    const initialStages: Record<number, number | null> = {};
-    submittedInstructions.forEach((_, index) => {
-        const stageIndex = 1 - index - 1;
-        if (stageIndex >= 0 && stageIndex < DEFAULT_STAGE_COUNT) {
-            initialStages[index] = stageIndex;
-        } else {
-            initialStages[index] = null;
-        }
-    });
+    // Decodificar las instrucciones aquí
+    const decoded = submittedInstructions.map(hex => decodeInstruction(hex));
+    
+    // --- INICIO DE PRUEBA DE CONSOLA ---
+    console.log("Decoded Instructions Input:", submittedInstructions);
+    console.log("Decoded Instructions Output:", decoded.map(info => getDecodedInstructionText(info)));
+    // --- FIN DE PRUEBA DE CONSOLA ---
 
-    setSimulationState({
-      ...initialState,
+    const calculatedMaxCycles = submittedInstructions.length + DEFAULT_STAGE_COUNT - 1;
+    // const initialStages: Record<number, number | null> = {}; // Se establecerá en el primer ciclo de calculateNextState
+
+    setSimulationState(prevState => ({
+      ...initialState, // Restablece la mayoría del estado
+      forwardingEnabled: prevState.forwardingEnabled, // Mantener opción de fw
+      stallEnabled: prevState.stallEnabled,           // Mantener opción de stall
       instructions: submittedInstructions,
-      currentCycle: 1,
+      decodedInstructions: decoded, // Guardar instrucciones decodificadas
+      currentCycle: 0, // Iniciar en ciclo 0, el primer avance será al ciclo 1
       maxCycles: calculatedMaxCycles,
       isRunning: true,
-      instructionStages: initialStages,
-    });
-  }, [resetSimulation]);
+      stageCount: DEFAULT_STAGE_COUNT,
+      instructionStages: {}, // Las etapas se calcularán en el primer tick del reloj
+      isFinished: false,
+    }));
+  }, []); // No es necesario resetSimulation como dependencia aquí
 
-  const pauseSimulation = () => {
-    setSimulationState((prevState) => {
-      if (prevState.isRunning) {
-        clearTimer();
-        return { ...prevState, isRunning: false };
-      }
-      return prevState;
-    });
-  };
+
+   const pauseSimulation = () => {
+     setSimulationState((prevState) => {
+       if (prevState.isRunning) {
+         clearTimer();
+         return { ...prevState, isRunning: false };
+       }
+       return prevState;
+     });
+   };
 
   const resumeSimulation = () => {
-    setSimulationState((prevState) => {
-      if (!prevState.isRunning && prevState.currentCycle > 0 && !prevState.isFinished) {
-        return { ...prevState, isRunning: true };
-      }
-      return prevState;
-    });
-  };
+     setSimulationState((prevState) => {
+        if (!prevState.isRunning && prevState.currentCycle > 0 && !prevState.isFinished) {
+            return { ...prevState, isRunning: true };
+        }
+        return prevState;
+     });
+   };
 
-  const setForwarding = (enabled: boolean) => {
-    setSimulationState(prevState => ({ ...prevState, forwardingEnabled: enabled }));
+   const setForwarding = (enabled: boolean) => {
+    setSimulationState(prevState => ({ ...prevState, forwardingEnabled: enabled, currentCycle: prevState.isRunning ? prevState.currentCycle: 0, isRunning: prevState.isRunning ? prevState.isRunning : false, isFinished: prevState.isRunning ? prevState.isFinished : false }));
+    // Si la simulación está corriendo y se cambia una opción, podría ser necesario resetear o recalcular
+    // Por ahora, solo actualizamos el estado. Considerar reiniciar la simulación si se cambian opciones durante la ejecución.
+    // Si la simulación ya ha corrido, cambiar estas opciones no tendrá efecto retroactivo sin reiniciar.
+    // Para simplificar, asumimos que estas opciones se configuran ANTES de "Start Simulation".
+    // Si se cambian después de iniciar, se aplicarán al siguiente "Start Simulation" o si la lógica de `calculateNextState` las usa dinámicamente.
+    // Una opción más robusta sería reiniciar la simulación (o al menos su progreso de ciclo) si estas se cambian mientras está pausada o después de haber corrido.
   };
 
   const setStall = (enabled: boolean) => {
-    setSimulationState(prevState => ({ ...prevState, stallEnabled: enabled }));
+    setSimulationState(prevState => ({ ...prevState, stallEnabled: enabled, currentCycle: prevState.isRunning ? prevState.currentCycle: 0, isRunning: prevState.isRunning ? prevState.isRunning : false, isFinished: prevState.isRunning ? prevState.isFinished : false }));
+    // Misma consideración que para setForwarding
   };
 
   React.useEffect(() => {
@@ -175,6 +208,7 @@ export function SimulationProvider({ children }: PropsWithChildren) {
     }
     return clearTimer;
   }, [simulationState.isRunning, simulationState.isFinished, runClock]);
+
 
   const stateValue: SimulationState = simulationState;
 
@@ -187,7 +221,7 @@ export function SimulationProvider({ children }: PropsWithChildren) {
       setForwarding,
       setStall,
     }),
-    [startSimulation, resetSimulation]
+    [startSimulation, resetSimulation, pauseSimulation, resumeSimulation, setForwarding, setStall] // Añadir las nuevas acciones
   );
 
   return (
