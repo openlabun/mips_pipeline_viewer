@@ -57,6 +57,9 @@ export function Stall(prev: DecodedInst, curr: DecodedInst): boolean {
   return hasHazard(prev, curr);
 }
 //usar para FW, la segunda componente verifica si es load
-export function canForward(prev: DecodedInst, curr: DecodedInst): boolean {
-  return (hasHazard(prev, curr) , prev.isLoad);
+export function canForward(prev: DecodedInst, curr: DecodedInst): [boolean,boolean] {
+  const hazard = hasHazard(prev, curr);
+  const requiereStall = hazard && prev.isLoad;
+  return [hazard, requiereStall];
+  
 }

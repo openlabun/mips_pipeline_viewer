@@ -48,6 +48,8 @@ const initialState: SimulationState = {
   isFinished: false,
 };
 let blockindex=-2
+//cambiar por logica de cambio
+const isStall=false
 // Function to calculate the next state based on the current state
 const calculateNextState = (currentState: SimulationState): SimulationState => {
   if (!currentState.isRunning || currentState.isFinished) {
@@ -65,7 +67,9 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
     
     if (stageIndex >= 0 && ((currentState.instructionStages[index]??-1)+1) < currentState.stageCount && !currentState.instructionFinished[index]){
       //complete stall logic
-      if (stageIndex==0 && currentState.instructions[index-1]){
+      if (isStall)
+      {
+        if (stageIndex==0 && currentState.instructions[index-1]){
         const i1= decodeInstruction(currentState.instructions[index])
         const i2= decodeInstruction(currentState.instructions[index-1])
         if (currentState.instructions[index-2]){
@@ -102,6 +106,53 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
       }else{          if (blockindex!=index){
         newInstructionStages[index] = (currentState.instructionStages[index]??-1)+1
         activeInstructions++
+      }
+      }}
+      //FW logic
+      else {
+        if (stageIndex==1 && currentState.instructions[index-1]){
+        const i1= decodeInstruction(currentState.instructions[index])
+        const i2= decodeInstruction(currentState.instructions[index-1])
+        if (currentState.instructions[index-2]){
+          const i3= decodeInstruction(currentState.instructions[index-2])
+          if (canForward(i3,i1)[0] && ((currentState.instructionStages[index-2]??-1))+3 < currentState.stageCount && !currentState.instructionFinished[index-2]){
+            //enviar datos
+            console.log("tenemos un FW en Mem")
+          }
+        }
+        if (canForward(i2,i1)[0] && ((currentState.instructionStages[index-1]??-1))+3 < currentState.stageCount && !currentState.instructionFinished[index-1])
+          {
+          
+          console.log("posible")
+          if (!canForward(i2,i1)[1]){
+            //enviar datos
+            console.log("FW en ex")
+          }else{
+          console.log("es load")
+          activeInstructions++
+          nextCycle--
+          blockindex=index+1
+          }
+        }
+      if (!canForward(i2,i1)[1]){
+      if (index==blockindex) {
+        blockindex=index+1
+      }else
+      {
+
+      newInstructionStages[index] =(currentState.instructionStages[index]??-1)+1
+      activeInstructions++}
+    }  else{
+      newInstructionStages[index] =(currentState.instructionStages[index]??-1)
+      activeInstructions++
+      }
+      
+        }  
+        else{          
+          if (blockindex!=index){
+        newInstructionStages[index] = (currentState.instructionStages[index]??-1)+1
+        activeInstructions++
+      }
       }
       }
       
