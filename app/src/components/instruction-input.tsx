@@ -64,7 +64,9 @@ function insertNopsForHazards(instructions: string[]): string[] {
     newInstructions.push(inst);
 
     if (decoded.type === 'R') {
-      regWriteHistory[decoded.rd] = i;
+      if (typeof decoded.rd === 'number') {
+        regWriteHistory[decoded.rd] = i;
+      }
     } else if (decoded.type === 'I') {
       regWriteHistory[decoded.rt] = i;
     }
