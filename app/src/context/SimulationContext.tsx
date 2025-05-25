@@ -82,7 +82,7 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
           blockindex=index+1
           newInstructionStages[index] =(currentState.instructionStages[index]||0)
           }else {        
-          if (Stall(i2,i1) && ((currentState.instructionStages[index-1]??-1))+3 < currentState.stageCount && !currentState.instructionFinished[index-1]){
+          if (Stall(i2,i1) && ((currentState.instructionStages[index-1]??-1))+2 < currentState.stageCount && !currentState.instructionFinished[index-1]){
           console.log("aqui hay un stall")
           activeInstructions++
           nextCycle--
