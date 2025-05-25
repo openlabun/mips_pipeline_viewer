@@ -1,5 +1,5 @@
 // src/components/instruction-input.tsx
-"use client";
+'use client';
 
 import type * as React from 'react';
 import { useState, useEffect } from 'react';
@@ -7,111 +7,220 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { useSimulationActions, useSimulationState } from '@/context/SimulationContext'; // Import context hooks
+import {
+  useSimulationActions,
+  useSimulationState,
+} from '@/context/SimulationContext';
 import { Play, Pause, RotateCcw } from 'lucide-react';
 
 interface InstructionInputProps {
-  onInstructionsSubmit: (instructions: string[]) => void;
+  onInstructionsSubmit: (
+    instructions: string[],
+    enableForwarding: boolean,
+    enableStalls: boolean
+  ) => void;
   onReset: () => void;
-  isRunning: boolean; // Keep isRunning prop for button state logic
+  isRunning: boolean;
 }
 
-const HEX_REGEX = /^[0-9a-fA-F]{8}$/; // Basic check for 8 hex characters
+const INSTRUCTION_PATTERN = /^[0-9a-fA-F]{8}$/;
 
-export function InstructionInput({ onInstructionsSubmit, onReset, isRunning }: InstructionInputProps) {
-  const [inputText, setInputText] = useState<string>('');
-  const [error, setError] = useState<string | null>(null);
-  const { pauseSimulation, resumeSimulation } = useSimulationActions();
-  const { currentCycle, isFinished, instructions } = useSimulationState(); // Get state from context
+export function InstructionInput({
+  onInstructionsSubmit,
+  onReset,
+  isRunning,
+}: InstructionInputProps) {
+  const [programText, setProgramText] = useState<string>('');
+  const [validationError, setValidationError] = useState<string | null>(null);
+  const [enableForwarding, setEnableForwarding] = useState<boolean>(true);
+  const [enableStalls, setEnableStalls] = useState<boolean>(true);
 
-  // Reset input text when instructions are cleared (e.g., on reset)
+  const { haltExecution, resumeExecution } = useSimulationActions();
+  const { clockCycle, executionComplete, programInstructions } =
+    useSimulationState();
+
+  // Clear validation errors when instructions reset
   useEffect(() => {
-    if (instructions.length === 0) {
-      setInputText('');
-      setError(null); // Clear errors on reset as well
+    if (programInstructions.length === 0) {
+      setValidationError(null);
     }
-  }, [instructions]);
+  }, [programInstructions]);
 
+  const hasBegunExecution = clockCycle > 0;
+  const canToggleExecution = hasBegunExecution && !executionComplete;
+  const inputsDisabled = hasBegunExecution && !executionComplete;
 
-  const hasStarted = currentCycle > 0;
-  // Can only pause/resume if started and not finished
-  const canPauseResume = hasStarted && !isFinished;
-  // Input/Start button should be disabled if simulation has started and isn't finished
-  const disableInputAndStart = hasStarted && !isFinished;
+  const validateAndSubmit = () => {
+    setValidationError(null);
+    const lines = programText.trim().split('\n');
+    const validInstructions = lines
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
 
-
-  const handleSubmit = () => {
-    setError(null);
-    const lines = inputText.trim().split('\n');
-    const currentInstructions = lines
-      .map(line => line.trim())
-      .filter(line => line.length > 0);
-
-    if (currentInstructions.length === 0) {
-      setError('Please enter at least one MIPS instruction in hexadecimal format.');
+    if (validInstructions.length === 0) {
+      setValidationError('At least one valid MIPS instruction is required.');
       return;
     }
 
-    const invalidInstructions = currentInstructions.filter(inst => !HEX_REGEX.test(inst));
-    if (invalidInstructions.length > 0) {
-      setError(`Invalid instruction format found: ${invalidInstructions.join(', ')}. Each instruction must be 8 hexadecimal characters.`);
+    const invalidFormats = validInstructions.filter(
+      (inst) => !INSTRUCTION_PATTERN.test(inst)
+    );
+    if (invalidFormats.length > 0) {
+      setValidationError(
+        `Invalid format detected: ${invalidFormats.join(
+          ', '
+        )}. Instructions must be exactly 8 hexadecimal characters.`
+      );
       return;
     }
 
-    onInstructionsSubmit(currentInstructions);
+    onInstructionsSubmit(validInstructions, enableForwarding, enableStalls);
   };
 
-  const handlePauseResume = () => {
+  const handleExecutionToggle = () => {
     if (isRunning) {
-      pauseSimulation();
+      haltExecution();
     } else {
-      resumeSimulation();
+      resumeExecution();
     }
   };
-
 
   return (
-    <Card className="w-full max-w-md">
-      <CardHeader>
-        <CardTitle>MIPS Instructions</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="grid w-full gap-1.5">
-          <Label htmlFor="instructions">Enter Hex Instructions (one per line)</Label>
-          <Textarea
-            id="instructions"
-            placeholder="e.g., 00a63820..." // Removed 0x prefix for consistency with regex
-            value={inputText}
-            onChange={(e) => setInputText(e.target.value)}
-            rows={5}
-            className="font-mono"
-            // Disable input field if simulation has started and not yet finished
-            disabled={disableInputAndStart}
-            aria-label="MIPS Hex Instructions Input"
-          />
-          {error && <p className="text-sm text-destructive">{error}</p>}
-        </div>
-        <div className="flex justify-between items-center gap-2">
-           {/* Start Button: Disabled if started and not finished */}
-          <Button onClick={handleSubmit} disabled={disableInputAndStart} className="flex-1">
-             {isFinished ? 'Finished' : hasStarted ? 'Running...' : 'Start Simulation'}
-          </Button>
+    <div className='space-y-4'>
+      <Card className='w-full max-w-md'>
+        <CardHeader>
+          <CardTitle>MIPS Instructions</CardTitle>
+        </CardHeader>
+        <CardContent className='space-y-4'>
+          <div className='grid w-full gap-1.5'>
+            <Label htmlFor='program-input'>
+              Enter Hex Instructions (one per line)
+            </Label>
+            <Textarea
+              id='program-input'
+              placeholder='e.g., 00a63820...'
+              value={programText}
+              onChange={(e) => setProgramText(e.target.value)}
+              rows={5}
+              className='font-mono'
+              disabled={inputsDisabled}
+              aria-label='MIPS Hex Instructions Input'
+            />
+            {validationError && (
+              <p className='text-sm text-destructive'>{validationError}</p>
+            )}
+          </div>
 
-          {/* Conditional Play/Pause Button: Show only when pause/resume is possible */}
-          {canPauseResume && (
-             <Button variant="outline" onClick={handlePauseResume} size="icon" aria-label={isRunning ? 'Pause Simulation' : 'Resume Simulation'}>
-              {isRunning ? <Pause /> : <Play />}
-             </Button>
-          )}
+          <div className='flex justify-between items-center gap-2'>
+            <Button
+              onClick={validateAndSubmit}
+              disabled={inputsDisabled}
+              className='flex-1'
+            >
+              {executionComplete
+                ? 'Completed'
+                : hasBegunExecution
+                ? 'Executing...'
+                : 'Begin Execution'}
+            </Button>
 
-          {/* Reset Button: Show only if the simulation has started */}
-           {hasStarted && (
-              <Button variant="destructive" onClick={onReset} size="icon" aria-label="Reset Simulation">
+            {canToggleExecution && (
+              <Button
+                variant='outline'
+                onClick={handleExecutionToggle}
+                size='icon'
+                aria-label={isRunning ? 'Halt Execution' : 'Resume Execution'}
+              >
+                {isRunning ? <Pause /> : <Play />}
+              </Button>
+            )}
+
+            {hasBegunExecution && (
+              <Button
+                variant='destructive'
+                onClick={onReset}
+                size='icon'
+                aria-label='Reset Processor'
+              >
                 <RotateCcw />
               </Button>
-           )}
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Hazard Configuration - Outside the card */}
+      <div className='w-full max-w-md space-y-3'>
+        <Label className='text-sm font-medium'>Hazard Configuration</Label>
+
+        <div className='flex gap-6'>
+          <div className='flex items-center space-x-2'>
+            <input
+              type='radio'
+              id='no-hazard-handling'
+              name='pipeline-config'
+              checked={!enableForwarding && !enableStalls}
+              onChange={() => {
+                setEnableForwarding(false);
+                setEnableStalls(false);
+              }}
+              disabled={inputsDisabled}
+              className='h-4 w-4'
+            />
+            <Label htmlFor='no-hazard-handling' className='text-sm'>
+              No Hazards
+            </Label>
+          </div>
+
+          <div className='flex items-center space-x-2'>
+            <input
+              type='radio'
+              id='stalls-only'
+              name='pipeline-config'
+              checked={!enableForwarding && enableStalls}
+              onChange={() => {
+                setEnableForwarding(false);
+                setEnableStalls(true);
+              }}
+              disabled={inputsDisabled}
+              className='h-4 w-4'
+            />
+            <Label htmlFor='stalls-only' className='text-sm'>
+              Stalls
+            </Label>
+          </div>
+
+          <div className='flex items-center space-x-2'>
+            <input
+              type='radio'
+              id='forwarding-stalls'
+              name='pipeline-config'
+              checked={enableForwarding && enableStalls}
+              onChange={() => {
+                setEnableForwarding(true);
+                setEnableStalls(true);
+              }}
+              disabled={inputsDisabled}
+              className='h-4 w-4'
+            />
+            <Label htmlFor='forwarding-stalls' className='text-sm'>
+              Forwarding
+            </Label>
+          </div>
         </div>
-      </CardContent>
-    </Card>
+
+        <div className='text-xs text-muted-foreground'>
+          {!enableForwarding && !enableStalls && (
+            <span>Raw pipeline execution - hazards ignored</span>
+          )}
+          {!enableForwarding && enableStalls && (
+            <span>Pipeline stalls on all RAW dependencies</span>
+          )}
+          {enableForwarding && enableStalls && (
+            <span>Data forwarding with stalls for load-use hazards</span>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
