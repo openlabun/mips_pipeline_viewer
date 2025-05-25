@@ -75,7 +75,6 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
     // Instruction `index` enters stage `s` (0-based) at cycle `index + s + 1`
     // So, in cycle `c`, the stage is `c - index - 1`
     const stageIndex = nextCycle - index - 1;
-
     if (
       stageIndex >= 0 &&
       (currentState.instructionStages[index] ?? -1) + 1 <
@@ -143,10 +142,11 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
       //FW logic
       else {
         if (stageIndex == 1 && currentState.instructions[index - 1]) {
+          let i3=null
           const i1 = decodeInstruction(currentState.instructions[index]);
           const i2 = decodeInstruction(currentState.instructions[index - 1]);
           if (currentState.instructions[index - 2]) {
-            const i3 = decodeInstruction(currentState.instructions[index - 2]);
+            i3 = decodeInstruction(currentState.instructions[index - 2]);
             if (
               canForward(i3, i1)[0] &&
               (currentState.instructionStages[index - 2] ?? -1) + 3 <
@@ -167,33 +167,43 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
             //console.log("posible");
             if (!canForward(i2, i1)[1]) {
               //enviar datos
-              console.log(i1, i2)
               console.log("FW en ex");
-              newStuckCell = [index+1, currentState.currentCycle+1];
+              newStuckCell = [index, currentState.currentCycle+1];
               newForwardOrigin = [index - 1, currentState.currentCycle+1]
             } else {
-              //FIX: arreglar bug de stall
               console.log("es load");
               activeInstructions++;
               nextCycle--;
               blockindex = index + 1;
               newInstructionStages[index] =
-                currentState.instructionStages[index] ?? 1;
+              currentState.instructionStages[index] ?? 1;
+              newStuckCell = [index, currentState.currentCycle+1];
+              newForwardOrigin = null
             }
           } else {
-            newInstructionStages[index] =
+              
+              newInstructionStages[index] =
               (currentState.instructionStages[index] ?? -1) + 1;
             activeInstructions++;
+            if (!(canForward(i3??decodeInstruction("00000000"), i1)[0] &&
+              (currentState.instructionStages[index - 2] ?? -1) + 3 <
+                currentState.stageCount &&
+              !currentState.instructionFinished[index - 2]
+            ) )
+           { newStuckCell = null;
+            newForwardOrigin = null}
           }
           if (!canForward(i2, i1)[1]) {
+
             if (index == blockindex) {
-              blockindex = -2;
+              blockindex=-2
             } else {
               newInstructionStages[index] =
                 (currentState.instructionStages[index] ?? -1) + 1;
               activeInstructions++;
             }
           } else {
+            
             newInstructionStages[index] =
               (currentState.instructionStages[index] ?? 1) <= 1
                 ? 1
@@ -201,7 +211,11 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
             activeInstructions++;
           }
         } else {
-          if (blockindex != index) {
+          
+          if ( stageIndex==2){
+            newStuckCell = null;
+            newForwardOrigin = null;}
+          if (blockindex != index || stageIndex==0) {
             newInstructionStages[index] =
               (currentState.instructionStages[index] ?? -1) + 1;
             activeInstructions++;
