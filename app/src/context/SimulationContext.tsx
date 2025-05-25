@@ -5,6 +5,16 @@ import type { PropsWithChildren } from 'react';
 import * as React from 'react';
 import { decodeInstruction, DecodedInstructionInfo, getDecodedInstructionText } from '@/lib/mips-decoder';
 
+// --- DEFINICIONES DE INTERFACES ---
+interface PipelineEvent {
+  type: 'stall' | 'forwarding' | 'active'; // 'active' para una etapa normal
+  stage: number; // La etapa en la que ocurre (IF, ID, EX, MEM, WB)
+  forwardingSource?: 'EX' | 'MEM' | null; // Solo para eventos de tipo 'forwarding'
+}
+
+// Clave: `cycle-${cycleNumber}-inst-${instructionIndex}`
+type PipelineEventHistory = Record<string, PipelineEvent>;
+
 interface InstructionPipelineInfo {
   stage: number | null;
   isStalled?: boolean;
@@ -18,7 +28,8 @@ interface SimulationState {
   maxCycles: number;
   isRunning: boolean;
   stageCount: number;
-  instructionStages: Record<number, InstructionPipelineInfo>;
+  instructionStages: Record<number, InstructionPipelineInfo>; // Estado actual de cada instrucción
+  pipelineEventHistory: PipelineEventHistory; // NUEVO: Historial de eventos para el rastro
   isFinished: boolean;
   forwardingEnabled: boolean;
   stallEnabled: boolean;
@@ -34,6 +45,7 @@ interface SimulationActions {
   setStall: (enabled: boolean) => void;
 }
 
+// --- CONSTANTES Y CONTEXTOS ---
 const STAGE_NAMES = ['IF', 'ID', 'EX', 'MEM', 'WB'] as const;
 type StageName = typeof STAGE_NAMES[number];
 
@@ -51,6 +63,7 @@ const PIPELINE_STAGES = {
   OUT: 5,
 } as const;
 
+// --- ESTADO INICIAL ---
 const initialState: SimulationState = {
   instructions: [],
   decodedInstructions: [],
@@ -59,12 +72,14 @@ const initialState: SimulationState = {
   isRunning: false,
   stageCount: DEFAULT_STAGE_COUNT,
   instructionStages: {},
+  pipelineEventHistory: {}, // NUEVO: Inicializar historial
   isFinished: false,
   forwardingEnabled: false,
   stallEnabled: false,
   stalledInstructionIndex: null,
 };
 
+// --- FUNCIÓN PRINCIPAL DE LÓGICA DEL PIPELINE ---
 const calculateNextState = (currentState: SimulationState): SimulationState => {
   if (!currentState.isRunning || currentState.isFinished) {
     return currentState;
@@ -74,13 +89,16 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
     instructions,
     decodedInstructions,
     currentCycle,
-    stageCount,
+    // stageCount, // No se usa directamente aquí, se usa DEFAULT_STAGE_COUNT
     forwardingEnabled,
     stallEnabled,
+    pipelineEventHistory: prevEventHistory, // Historial previo
   } = currentState;
 
   const nextCycle = currentCycle + 1;
   const newInstructionStages: Record<number, InstructionPipelineInfo> = {};
+  const currentCycleEventHistory: PipelineEventHistory = {}; // Eventos solo para este ciclo de avance
+
   let hazardRequiresStallGlobal = false;
   let stallingInstructionGlobalIndex: number | null = null;
   let newMaxCycles = currentState.maxCycles;
@@ -93,14 +111,12 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
       const consumerInfo = decodedInstructions[i];
       const consumerCurrentStageInfo = currentState.instructionStages[i];
       const consumerCurrentStage = consumerCurrentStageInfo?.stage;
-
       forwardingDecisionsForID[i] = null; 
-      let needsStallForThisConsumer = false; // Renombrado de hazardRequiresStall a algo local
+      let needsStallForThisConsumer = false;
 
       if (consumerCurrentStage === PIPELINE_STAGES.ID && consumerInfo.sourceRegisters && consumerInfo.sourceRegisters.length > 0) {
-        console.log(`[CTX] Cycle ${nextCycle}: Checking Inst ${i} ('${consumerInfo.hex}') in ID for hazards.`);
+        // console.log(`[CTX] Cycle ${nextCycle}: Checking Inst ${i} ('${consumerInfo.hex}') in ID for hazards.`);
         let resolvedByForwardingWithoutLoadUseStall = false;
-
         for (let j = 0; j < i; j++) { 
           const producerInfo = decodedInstructions[j];
           const producerCurrentStageInfo = currentState.instructionStages[j];
@@ -109,38 +125,32 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
           if (producerInfo.writesToRegister && producerInfo.destinationRegister !== null) {
             if (consumerInfo.sourceRegisters.includes(producerInfo.destinationRegister)) {
               const reg = producerInfo.destinationRegister;
-              console.log(`[CTX] Cycle ${nextCycle}: Inst ${i} (ID) needs $${reg}. Checking Inst ${j} ('${producerInfo.hex}') in stage ${producerCurrentStage}.`);
+              // console.log(`[CTX] Cycle ${nextCycle}: Inst ${i} (ID) needs $${reg}. Checking Inst ${j} ('${producerInfo.hex}') in stage ${producerCurrentStage}.`);
               
               if (forwardingEnabled) {
-                // PRIORIDAD 1: Stall para Load-Use si FW está ON
                 if (producerInfo.isLoadWord && producerCurrentStage === PIPELINE_STAGES.EX) {
-                  console.log(`[CTX] Cycle ${nextCycle}: DECISION - LOAD-USE HAZARD! Inst ${i} (ID) needs $${reg} from LW Inst ${j} (EX). Stall REQUIRED even with FW.`);
-                  needsStallForThisConsumer = true; // Esta consumidora necesita stall
-                  // No establecemos forwardingDecisionsForID[i] porque se stallará. El FW se aplicará después del stall.
-                  break; // Salir del bucle de productoras para esta consumidora
+                  console.log(`[CTX] Cycle ${nextCycle}: DECISION - LOAD-USE HAZARD! Inst ${i} (ID) needs $${reg} from LW Inst ${j} (EX). Stall REQUIRED.`);
+                  needsStallForThisConsumer = true; 
+                  break; 
                 }
-
-                // PRIORIDAD 2: Forwarding normal si no hubo stall por load-use
-                if (!needsStallForThisConsumer) { // Solo si no se decidió stall por load-use
-                  if (producerCurrentStage === PIPELINE_STAGES.EX && !producerInfo.isLoadWord) { // EX->EX (no LW)
+                if (!needsStallForThisConsumer) {
+                  if (producerCurrentStage === PIPELINE_STAGES.EX && !producerInfo.isLoadWord) {
                     console.log(`[CTX] Cycle ${nextCycle}: DECISION - FW EX->EX for Inst ${i} from Inst ${j} for $${reg}.`);
                     forwardingDecisionsForID[i] = 'EX';
                     resolvedByForwardingWithoutLoadUseStall = true;
                     break; 
                   }
-                  if (producerCurrentStage === PIPELINE_STAGES.MEM && !forwardingDecisionsForID[i]) { // MEM->EX
+                  if (producerCurrentStage === PIPELINE_STAGES.MEM && !forwardingDecisionsForID[i]) { 
                     console.log(`[CTX] Cycle ${nextCycle}: DECISION - FW MEM->EX for Inst ${i} from Inst ${j} for $${reg}.`);
                     forwardingDecisionsForID[i] = 'MEM';
                     resolvedByForwardingWithoutLoadUseStall = true;
                     break; 
                   }
                 }
-              } // Fin if (forwardingEnabled)
-
-              // PRIORIDAD 3: Stall si FW está OFF o si FW está ON pero no se pudo forwardear Y no se stalleó por load-use
+              }
               if (!needsStallForThisConsumer && !resolvedByForwardingWithoutLoadUseStall && stallEnabled) {
                 if (producerCurrentStage === PIPELINE_STAGES.EX || producerCurrentStage === PIPELINE_STAGES.MEM) {
-                  console.log(`[CTX] Cycle ${nextCycle}: DECISION - STALL (No FW path or FW off): Inst ${i} ('${consumerInfo.hex}') needs $${reg} from Inst ${j} ('${producerInfo.hex}') in ${producerCurrentStage === PIPELINE_STAGES.EX ? 'EX' : 'MEM'}.`);
+                  console.log(`[CTX] Cycle ${nextCycle}: DECISION - STALL (No FW path or FW off): Inst ${i} needs $${reg} from Inst ${j}.`);
                   needsStallForThisConsumer = true;
                 }
               }
@@ -148,7 +158,6 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
           } 
           if (needsStallForThisConsumer || resolvedByForwardingWithoutLoadUseStall) break; 
         }
-
         if (needsStallForThisConsumer) {
           hazardRequiresStallGlobal = true;
           stallingInstructionGlobalIndex = i;
@@ -158,32 +167,49 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
     } 
   }
 
+  // FASE 2: Avanzar instrucciones y registrar eventos
   if (hazardRequiresStallGlobal && stallingInstructionGlobalIndex !== null) {
-    newMaxCycles = Math.max(newMaxCycles, nextCycle + stageCount + 1); 
+    newMaxCycles = Math.max(newMaxCycles, nextCycle + DEFAULT_STAGE_COUNT); // Stall alarga
     console.log(`[CTX] STALLING CYCLE: Inst ${stallingInstructionGlobalIndex} (in ID) is stalled. Cycle ${nextCycle}.`);
     instructions.forEach((_, index) => {
       const currentStageInfo = currentState.instructionStages[index];
       const currentStage = currentStageInfo?.stage;
+      const eventKey = `cycle-${nextCycle}-inst-${index}`;
 
       if (index === stallingInstructionGlobalIndex) { 
         newInstructionStages[index] = { stage: PIPELINE_STAGES.ID, isStalled: true };
+        currentCycleEventHistory[eventKey] = { type: 'stall', stage: PIPELINE_STAGES.ID };
       } else if (index === stallingInstructionGlobalIndex + 1 && currentStage === PIPELINE_STAGES.IF) {
         newInstructionStages[index] = { stage: PIPELINE_STAGES.IF, isStalled: true };
+        currentCycleEventHistory[eventKey] = { type: 'stall', stage: PIPELINE_STAGES.IF }; // O 'active' si preferimos no marcar stall en IF
       } else if (currentStage !== null && currentStage < PIPELINE_STAGES.OUT) {
         const nextStageValue = currentStage + 1;
-        newInstructionStages[index] = { stage: nextStageValue > PIPELINE_STAGES.WB ? PIPELINE_STAGES.OUT : nextStageValue, isStalled: false };
+        const actualNextStage = nextStageValue > PIPELINE_STAGES.WB ? PIPELINE_STAGES.OUT : nextStageValue;
+        newInstructionStages[index] = { stage: actualNextStage, isStalled: false };
+        if (actualNextStage < PIPELINE_STAGES.OUT) {
+            currentCycleEventHistory[eventKey] = { type: 'active', stage: actualNextStage };
+        }
       } else if (currentStage === null) { 
          const entryCycleForIF = index + 1;
          if (nextCycle === entryCycleForIF && !(index === stallingInstructionGlobalIndex + 1)) {
             newInstructionStages[index] = { stage: PIPELINE_STAGES.IF };
+            currentCycleEventHistory[eventKey] = { type: 'active', stage: PIPELINE_STAGES.IF };
          } else {
             newInstructionStages[index] = { stage: null };
          }
       } else { 
         newInstructionStages[index] = { stage: currentStage, isStalled: !!currentStageInfo?.isStalled };
+         if (currentStage !== null && currentStage < PIPELINE_STAGES.OUT) { // Si estaba stalleada y sigue (aunque esta lógica es para el stall activo)
+            currentCycleEventHistory[eventKey] = { type: currentStageInfo?.isStalled ? 'stall' : 'active', stage: currentStage };
+        }
       }
     });
-  } else { 
+    // Marcar la etapa EX como "burbuja" implícitamente si la instrucción que iba a entrar se stalleó
+    // No hay una instrucción específica para la burbuja, es la ausencia de una instrucción útil.
+    // Para la visualización, si ninguna instrucción tiene `stage: PIPELINE_STAGES.EX` en `newInstructionStages`
+    // para `instIndex = stallingInstructionGlobalIndex`, esa celda estará vacía (o podemos marcarla).
+
+  } else { // NO HAY STALL GLOBAL
     instructions.forEach((_, index) => {
       const prevStageInfo = currentState.instructionStages[index];
       const prevStage = prevStageInfo?.stage;
@@ -206,10 +232,15 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
       }
       
       const forwardingSourceToApply = (nextStageValue === PIPELINE_STAGES.EX) ? (forwardingDecisionsForID[index] || null) : null;
+      const eventKey = `cycle-${nextCycle}-inst-${index}`;
+
       if (forwardingSourceToApply) {
           console.log(`[CTX] Cycle ${nextCycle}: Inst ${index} ('${decodedInstructions[index].hex}') entering EX, APPLYING FW from ${forwardingSourceToApply}.`);
+          currentCycleEventHistory[eventKey] = { type: 'forwarding', stage: PIPELINE_STAGES.EX, forwardingSource: forwardingSourceToApply };
+      } else if (nextStageValue !== null && nextStageValue < PIPELINE_STAGES.OUT) {
+          currentCycleEventHistory[eventKey] = { type: 'active', stage: nextStageValue };
       }
-
+      
       newInstructionStages[index] = { 
         stage: nextStageValue, 
         isStalled: false, 
@@ -229,10 +260,14 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
   const isSimFinished = allDone && (instructions.length > 0);
   const isSimRunning = !isSimFinished && currentState.isRunning;
 
+  // Combinar eventos del ciclo actual con el historial
+  const updatedEventHistory = { ...prevEventHistory, ...currentCycleEventHistory };
+
   return {
     ...currentState,
     currentCycle: nextCycle,
     instructionStages: newInstructionStages,
+    pipelineEventHistory: updatedEventHistory, // NUEVO: guardar historial actualizado
     isRunning: isSimRunning,
     isFinished: isSimFinished,
     maxCycles: newMaxCycles,
@@ -240,7 +275,6 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
   };
 };
 
-// --- PROVIDER Y HOOKS (El resto del archivo sin cambios) ---
 export function SimulationProvider({ children }: PropsWithChildren) {
   const [simulationState, setSimulationState] = React.useState<SimulationState>(initialState);
   const intervalRef = React.useRef<NodeJS.Timeout | null>(null);
@@ -274,8 +308,9 @@ export function SimulationProvider({ children }: PropsWithChildren) {
   const resetSimulation = React.useCallback(() => {
     clearTimer();
     setSimulationState(prevState => ({
-      ...initialState,
-      forwardingEnabled: prevState.forwardingEnabled,
+      ...initialState, // Carga todo el estado inicial por defecto
+      pipelineEventHistory: {}, // Limpiar historial en reset
+      forwardingEnabled: prevState.forwardingEnabled, 
       stallEnabled: prevState.stallEnabled,
     }));
   }, []);
@@ -285,6 +320,7 @@ export function SimulationProvider({ children }: PropsWithChildren) {
     if (submittedInstructions.length === 0) {
       setSimulationState(prevState => ({
         ...initialState,
+        pipelineEventHistory: {},
         forwardingEnabled: prevState.forwardingEnabled,
         stallEnabled: prevState.stallEnabled,
       }));
@@ -295,7 +331,7 @@ export function SimulationProvider({ children }: PropsWithChildren) {
                            ? submittedInstructions.length + DEFAULT_STAGE_COUNT - 1 
                            : 0;
     const initialStages: Record<number, InstructionPipelineInfo> = {};
-    for (let i = 0; i < submittedInstructions.length; i++) {
+    for (let i = 0; i < submittedInstructions.length; i++) { // Pre-poblar para ciclo 0
         initialStages[i] = { stage: null, isStalled: false, forwardingSourceStage: null };
     }
 
@@ -310,6 +346,7 @@ export function SimulationProvider({ children }: PropsWithChildren) {
       isRunning: true,
       isFinished: false,
       instructionStages: initialStages, 
+      pipelineEventHistory: {}, // Limpiar historial al inicio
       stalledInstructionIndex: null,
     }));
   }, []);
@@ -342,7 +379,7 @@ export function SimulationProvider({ children }: PropsWithChildren) {
         forwardingEnabled: enabled,
         ...(shouldResetProgress && { 
           currentCycle: 0, isRunning: false, isFinished: false,
-          instructionStages: {}, stalledInstructionIndex: null,
+          instructionStages: {}, stalledInstructionIndex: null, pipelineEventHistory: {},
           maxCycles: prevState.instructions.length > 0 ? prevState.instructions.length + DEFAULT_STAGE_COUNT -1 : 0,
         })
       };
@@ -358,7 +395,7 @@ export function SimulationProvider({ children }: PropsWithChildren) {
         stallEnabled: enabled,
         ...(shouldResetProgress && { 
           currentCycle: 0, isRunning: false, isFinished: false,
-          instructionStages: {}, stalledInstructionIndex: null,
+          instructionStages: {}, stalledInstructionIndex: null, pipelineEventHistory: {},
           maxCycles: prevState.instructions.length > 0 ? prevState.instructions.length + DEFAULT_STAGE_COUNT -1 : 0,
         })
       };

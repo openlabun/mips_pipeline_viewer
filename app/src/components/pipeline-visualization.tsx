@@ -24,7 +24,8 @@ const STAGES_DEFINITION = [
   { name: 'WB', icon: CheckSquare },
 ] as const;
 
-const STALL_STAGE_DISPLAY_DATA = { name: 'STALL', icon: MinusCircle };
+// Ya no necesitamos STALL_STAGE_DISPLAY_DATA si construimos el texto dinámicamente
+// const STALL_STAGE_DISPLAY_DATA = { name: 'STALL', icon: MinusCircle }; 
 
 const PIPELINE_STAGE_INDICES = {
   IF: 0,
@@ -42,51 +43,33 @@ export function PipelineVisualization() {
     maxCycles: contextMaxCycles,
     isRunning,
     instructionStages,
+    pipelineEventHistory,
     isFinished,
   } = useSimulationState();
-
-  // Log inicial de los props del contexto
-  // console.log('[PipelineVis] Render Start. Context values:', { contextInstructions, contextMaxCycles, cycle, isRunning, isFinished });
 
   const instructions = contextInstructions || [];
   const maxCyclesFromContext = contextMaxCycles || 0;
 
-  // console.log('[PipelineVis] Safe values:', { instructionsLength: instructions.length, maxCyclesFromContext });
-
   const calculatedMaxCycles = React.useMemo(() => {
-    // console.log('[PipelineVis] Entering useMemo for calculatedMaxCycles. Deps:', { maxCyclesFromContext, instructionsLength: instructions.length });
-    let result;
-    if (maxCyclesFromContext > 0) {
-      result = maxCyclesFromContext;
-    } else if (instructions.length > 0) {
-      result = instructions.length + STAGES_DEFINITION.length + 10;
-    } else {
-      result = 15; // Default
+    if (maxCyclesFromContext > 0) return maxCyclesFromContext;
+    if (instructions.length > 0) {
+      return instructions.length + STAGES_DEFINITION.length + 10;
     }
-    // console.log('[PipelineVis] calculatedMaxCycles result:', result);
-    return result;
+    return 15;
   }, [maxCyclesFromContext, instructions.length]);
 
-  // console.log('[PipelineVis] After useMemo for calculatedMaxCycles. Value:', calculatedMaxCycles);
-
   const cycleNumbers = React.useMemo(() => {
-    // console.log('[PipelineVis] Entering useMemo for cycleNumbers. Dependency calculatedMaxCycles:', calculatedMaxCycles);
     const length = Math.max(0, Number(calculatedMaxCycles) || 0);
     if (isNaN(length)) {
-        console.error('[PipelineVis] CRITICAL ERROR: length for cycleNumbers is NaN. calculatedMaxCycles was:', calculatedMaxCycles);
-        return [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]; // Fallback
+      console.error('[PipelineVis] CRITICAL ERROR IN CYCLE NUMBERS: length for cycleNumbers is NaN. calculatedMaxCycles was:', calculatedMaxCycles);
+      return Array.from({ length: 15 }, (_, i) => i + 1);
     }
-    const result = Array.from({ length }, (_, i) => i + 1);
-    // console.log('[PipelineVis] cycleNumbers result (length):', result.length);
-    return result;
+    return Array.from({ length }, (_, i) => i + 1);
   }, [calculatedMaxCycles]);
-
-  // console.log('[PipelineVis] After useMemo for cycleNumbers. Value:', cycleNumbers);
 
   if (!Array.isArray(cycleNumbers)) {
     console.error('[PipelineVis] CRITICAL ERROR: cycleNumbers is NOT an array before map. Value:', cycleNumbers);
   }
-
 
   return (
     <Card className="w-full overflow-hidden">
@@ -100,7 +83,7 @@ export function PipelineVisualization() {
             <TableHeader>
               <TableRow>
                 <TableHead className="w-[150px] sticky left-0 bg-card z-10 border-r">Instruction</TableHead>
-                {(cycleNumbers || []).map((cNum) => ( 
+                {(cycleNumbers || []).map((cNum) => (
                   <TableHead key={`cycle-header-${cNum}`} className="text-center w-16">
                     {cNum}
                   </TableHead>
@@ -113,102 +96,82 @@ export function PipelineVisualization() {
                   <TableCell className="font-mono sticky left-0 bg-card z-10 border-r">
                     {inst}
                   </TableCell>
-                  {(cycleNumbers || []).map((cCol) => { 
+                  {(cycleNumbers || []).map((cCol) => {
                     const stageInfo = instructionStages?.[instIndex];
+                    const eventKey = `cycle-${cCol}-inst-${instIndex}`;
+                    const historicalEvent = pipelineEventHistory?.[eventKey];
 
                     let cellContentConfig = null;
                     let cellBgClass = 'bg-background';
                     let cellTextClass = 'text-foreground';
-                    let isStalledForCell = false;
-                    let isForwardingForCell = false;
 
-                    if (cCol === cycle) { 
+                    if (cCol === cycle && !isFinished) { 
                       if (stageInfo && stageInfo.stage !== null && stageInfo.stage < PIPELINE_STAGE_INDICES.OUT) {
                         const currentStageIdx = stageInfo.stage;
-                        isStalledForCell = !!stageInfo.isStalled;
-                        isForwardingForCell = !!stageInfo.forwardingSourceStage && currentStageIdx === PIPELINE_STAGE_INDICES.EX;
+                        const isStalled = !!stageInfo.isStalled;
+                        const isForwarding = !!stageInfo.forwardingSourceStage && currentStageIdx === PIPELINE_STAGE_INDICES.EX;
 
-                        // --- CONSOLE LOG PARA LA CELDA DEL CICLO ACTUAL ---
-                        // Loguear para la instrucción relevante (ej. Inst 1) o para todas si es necesario
-                        if (instIndex === 1 && cCol === cycle) { 
-                            console.log(`[PipelineVis] Cycle ${cycle}: Inst ${instIndex} ('${inst}') stageInfo:`, JSON.stringify(stageInfo) , `isStalledForCell: ${isStalledForCell}, isForwardingForCell: ${isForwardingForCell}`);
+                        if (isStalled) {
+                          if (currentStageIdx < STAGES_DEFINITION.length) {
+                            const stageData = STAGES_DEFINITION[currentStageIdx];
+                            cellContentConfig = {
+                                icon: MinusCircle, 
+                                name: `${stageData.name} (Stall)` 
+                            };
+                          } else { // Fallback
+                             cellContentConfig = {name: 'STALL', icon: MinusCircle};
+                          }
+                          cellBgClass = 'bg-stall'; cellTextClass = 'text-stall-foreground';
+                        } else if (isForwarding) {
+                          const stageData = STAGES_DEFINITION[currentStageIdx];
+                          cellContentConfig = { 
+                            icon: stageData.icon,
+                            name: `${stageData.name} (FWD ${stageInfo.forwardingSourceStage})` 
+                          };
+                          cellBgClass = 'bg-forwarding'; cellTextClass = 'text-forwarding-foreground';
+                        } else if (currentStageIdx < STAGES_DEFINITION.length) {
+                          cellContentConfig = STAGES_DEFINITION[currentStageIdx];
+                          if (isRunning) {
+                            cellBgClass = 'bg-accent animate-pulse-bg'; cellTextClass = 'text-accent-foreground';
+                          } else {
+                            cellBgClass = 'bg-accent'; cellTextClass = 'text-accent-foreground';
+                          }
                         }
-                        if(isStalledForCell && cCol === cycle){ // Este log ya existía y es bueno
-                             console.log(`[PipelineVis] STALL VISUAL: Cycle ${cycle}, Inst ${instIndex} ('${inst}') IS STALLED. StageInfo:`, JSON.stringify(stageInfo));
-                        }
-                        if(isForwardingForCell && cCol === cycle && currentStageIdx === PIPELINE_STAGE_INDICES.EX){ // Este log ya existía y es bueno
-                             console.log(`[PipelineVis] FORWARDING VISUAL: Cycle ${cycle}, Inst ${instIndex} ('${inst}') IS FORWARDING to EX from ${stageInfo.forwardingSourceStage}. StageInfo:`, JSON.stringify(stageInfo));
-                        }
-                        // --- FIN CONSOLE LOG ---
-
-                        if (isFinished) {
-                           if (isStalledForCell) {
-                                cellContentConfig = STALL_STAGE_DISPLAY_DATA;
-                                cellBgClass = 'bg-stall'; cellTextClass = 'text-stall-foreground';
-                           } else if (isForwardingForCell) {
-                                cellContentConfig = STAGES_DEFINITION[currentStageIdx];
-                                cellBgClass = 'bg-forwarding'; cellTextClass = 'text-forwarding-foreground';
-                           } else if (currentStageIdx < STAGES_DEFINITION.length) {
-                                cellContentConfig = STAGES_DEFINITION[currentStageIdx];
-                                cellBgClass = 'bg-secondary'; cellTextClass = 'text-secondary-foreground';
-                           }
-                        } else { 
-                            if (isStalledForCell) {
-                                cellContentConfig = STALL_STAGE_DISPLAY_DATA;
-                                cellBgClass = 'bg-stall'; cellTextClass = 'text-stall-foreground';
-                            } else if (isForwardingForCell) {
-                                cellContentConfig = STAGES_DEFINITION[currentStageIdx];
-                                cellBgClass = 'bg-forwarding'; cellTextClass = 'text-forwarding-foreground';
-                            } else if (currentStageIdx < STAGES_DEFINITION.length) {
-                                cellContentConfig = STAGES_DEFINITION[currentStageIdx];
-                                if (isRunning) {
-                                    cellBgClass = 'bg-accent animate-pulse-bg'; cellTextClass = 'text-accent-foreground';
-                                } else {
-                                    cellBgClass = 'bg-accent'; cellTextClass = 'text-accent-foreground';
-                                }
-                            }
-                        }
-                      } else if (isFinished && stageInfo && stageInfo.stage === PIPELINE_STAGE_INDICES.OUT) {
-                        cellContentConfig = null;
-                        cellBgClass = 'bg-background';
                       }
-                    } else if (cCol < cycle) { 
-                        const idealStageInPast = cCol - (instIndex + 1);
-                        if (idealStageInPast >= 0 && idealStageInPast < STAGES_DEFINITION.length) {
-                            const actualCurrentStageForInst = stageInfo?.stage;
-                            if (actualCurrentStageForInst !== null && typeof actualCurrentStageForInst !== 'undefined') {
-                                if (isFinished || actualCurrentStageForInst > idealStageInPast || actualCurrentStageForInst === PIPELINE_STAGE_INDICES.OUT) {
-                                    cellContentConfig = STAGES_DEFINITION[idealStageInPast];
-                                    cellBgClass = 'bg-secondary';
-                                    cellTextClass = 'text-secondary-foreground';
-                                }
-                            }
+                    } else if (cCol < cycle || (isFinished && cCol <= cycle)) { 
+                      if (historicalEvent) {
+                        const eventStageIdx = historicalEvent.stage;
+                        if (historicalEvent.type === 'stall' && eventStageIdx < STAGES_DEFINITION.length) {
+                          const stageData = STAGES_DEFINITION[eventStageIdx];
+                          cellContentConfig = {
+                              icon: MinusCircle,
+                              name: `${stageData.name} (Stall)`
+                          };
+                          cellBgClass = 'bg-stall'; cellTextClass = 'text-stall-foreground';
+                        } else if (historicalEvent.type === 'forwarding' && eventStageIdx === PIPELINE_STAGE_INDICES.EX) {
+                          const stageData = STAGES_DEFINITION[PIPELINE_STAGE_INDICES.EX];
+                           cellContentConfig = { 
+                            icon: stageData.icon,
+                            name: `${stageData.name} (FWD ${historicalEvent.forwardingSource})`
+                          };
+                          cellBgClass = 'bg-forwarding'; cellTextClass = 'text-forwarding-foreground';
+                        } else if (historicalEvent.type === 'active' && eventStageIdx < STAGES_DEFINITION.length) {
+                          cellContentConfig = STAGES_DEFINITION[eventStageIdx];
+                          cellBgClass = 'bg-secondary'; cellTextClass = 'text-secondary-foreground';
+                        } else { 
+                           cellBgClass = 'bg-background'; 
                         }
-                    }
-                    
-                    if (isFinished && cCol <= cycle ) { 
-                        const idealStageInPast = cCol - (instIndex + 1);
-                        if (idealStageInPast >=0 && idealStageInPast < STAGES_DEFINITION.length) {
-                            if (cCol !== cycle) { 
-                                if (!cellContentConfig) {
-                                    cellContentConfig = STAGES_DEFINITION[idealStageInPast];
-                                    cellBgClass = 'bg-secondary';
-                                    cellTextClass = 'text-secondary-foreground';
-                                }
-                            } else if (!cellContentConfig && stageInfo?.stage !== PIPELINE_STAGE_INDICES.OUT) {
-                                if (stageInfo?.stage !== null && typeof stageInfo?.stage !== 'undefined' && stageInfo.stage < STAGES_DEFINITION.length) {
-                                    cellContentConfig = STAGES_DEFINITION[stageInfo.stage];
-                                    cellBgClass = 'bg-secondary';
-                                    cellTextClass = 'text-secondary-foreground';
-                                }
-                            }
-                        } else if (idealStageInPast >= STAGES_DEFINITION.length && cCol !== cycle && !cellContentConfig) { 
-                             cellContentConfig = null;
-                             cellBgClass = 'bg-background';
-                        }
-                    } else if (isFinished && cCol > cycle && !cellContentConfig) { 
-                        cellContentConfig = null;
-                        cellBgClass = 'bg-background';
+                      } else if (isFinished) { 
+                          const idealStageInPast = cCol - (instIndex + 1);
+                          if (idealStageInPast >=0 && idealStageInPast < STAGES_DEFINITION.length) {
+                              const finalActualStage = stageInfo?.stage; 
+                              if (finalActualStage === PIPELINE_STAGE_INDICES.OUT || (finalActualStage !== null && finalActualStage >= idealStageInPast) ) {
+                                  cellContentConfig = STAGES_DEFINITION[idealStageInPast];
+                                  cellBgClass = 'bg-secondary';
+                                  cellTextClass = 'text-secondary-foreground';
+                              }
+                          }
+                      }
                     }
 
                     return (
