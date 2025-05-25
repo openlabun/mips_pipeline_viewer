@@ -24,9 +24,6 @@ const STAGES_DEFINITION = [
   { name: 'WB', icon: CheckSquare },
 ] as const;
 
-// Ya no necesitamos STALL_STAGE_DISPLAY_DATA si construimos el texto dinámicamente
-// const STALL_STAGE_DISPLAY_DATA = { name: 'STALL', icon: MinusCircle }; 
-
 const PIPELINE_STAGE_INDICES = {
   IF: 0,
   ID: 1,

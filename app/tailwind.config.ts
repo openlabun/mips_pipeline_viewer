@@ -61,12 +61,12 @@ export default {
                 border: 'hsl(var(--sidebar-border))',
                 ring: 'hsl(var(--sidebar-ring))'
             },
-            // --- NUEVAS DEFINICIONES DE COLOR PARA STALL Y FORWARDING ---
+            
             stall: 'hsl(var(--stall))',
             'stall-foreground': 'hsl(var(--stall-foreground))',
             forwarding: 'hsl(var(--forwarding))',
             'forwarding-foreground': 'hsl(var(--forwarding-foreground))',
-            // --- FIN DE NUEVAS DEFINICIONES ---
+        
         },
         borderRadius: {
             lg: 'var(--radius)',
