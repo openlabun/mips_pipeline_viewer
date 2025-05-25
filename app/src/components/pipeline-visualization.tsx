@@ -11,7 +11,7 @@ import {
   TableCaption,
 } from '@/components/ui/table';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Download, Code2, Cpu, MemoryStick, CheckSquare, Pause } from 'lucide-react';
+import { Download, Code2, Cpu, MemoryStick, CheckSquare, Pause, FastForward } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useSimulationState, useStallInformation } from '@/context/SimulationContext';
 
@@ -24,6 +24,7 @@ const STAGES = [
 ] as const;
 
 const STALL_STAGE = { name: 'STALL', icon: Pause };
+const FORWARD_STAGE = { name: 'FORWARD', icon: FastForward };
 
 export function PipelineVisualization() {
   const {
@@ -34,7 +35,13 @@ export function PipelineVisualization() {
     isFinished,
   } = useSimulationState();
 
-  const { isStallEnabled, pipelineMatrix } = useStallInformation();
+  const { 
+    isStallEnabled, 
+    isForwardEnabled,
+    pipelineMatrix,
+    forwardedInstructions 
+  } = useStallInformation();
+  
   const totalCyclesToDisplay = maxCycles > 0 ? maxCycles : 0;
   const cycleNumbers = Array.from({ length: totalCyclesToDisplay }, (_, i) => i + 1);
 
@@ -66,10 +73,12 @@ export function PipelineVisualization() {
                   {cycleNumbers.map((c) => {
                     let stageValue: string = "";
                     let isStall = false;
+                    let isForward = false;
                     
-                    if (isStallEnabled && pipelineMatrix.length > 0) {
+                    if ((isStallEnabled || isForwardEnabled) && pipelineMatrix.length > 0) {
                       stageValue = pipelineMatrix[instIndex]?.[c - 1] || "";
                       isStall = stageValue === "STALL";
+                      isForward = stageValue === "FORWARD";
                     } else {
                       const expectedStageIndex = c - instIndex - 1;
                       if (expectedStageIndex >= 0 && expectedStageIndex < STAGES.length) {
@@ -79,7 +88,9 @@ export function PipelineVisualization() {
 
                     const currentStageData = isStall 
                       ? STALL_STAGE 
-                      : STAGES.find(stage => stage.name === stageValue);
+                      : isForward
+                        ? FORWARD_STAGE
+                        : STAGES.find(stage => stage.name === stageValue);
 
                     const isCurrentCycle = c === cycle;
                     const isActiveStage = isCurrentCycle && currentStageData && !isFinished;
@@ -99,6 +110,12 @@ export function PipelineVisualization() {
                             shouldHighlight ? 'bg-yellow-300 text-yellow-900' :
                             isPastStage ? 'bg-yellow-200 text-yellow-800' :
                             'bg-yellow-100 text-yellow-700'
+                          ) :
+                          isForward ? (
+                            shouldAnimate ? 'bg-purple-300 text-purple-900 animate-pulse-bg' :
+                            shouldHighlight ? 'bg-purple-300 text-purple-900' :
+                            isPastStage ? 'bg-purple-200 text-purple-800' :
+                            'bg-purple-100 text-purple-700'
                           ) :
                           shouldAnimate ? 'bg-primary text-primary-foreground animate-pulse-bg' :
                           shouldHighlight ? 'bg-primary text-primary-foreground' :
