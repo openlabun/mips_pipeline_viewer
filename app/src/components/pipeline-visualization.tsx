@@ -1,7 +1,6 @@
-// src/components/pipeline-visualization.tsx
 "use client";
 
-import type * as React from 'react';
+import * as React from 'react';
 import {
   Table,
   TableHeader,
@@ -13,220 +12,212 @@ import {
 } from '@/components/ui/table';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { 
-  Download, 
-  Code2, 
-  Cpu, 
-  MemoryStick, 
-  CheckSquare, 
-  AlertTriangle, 
-  ArrowRight,
-  Zap,
-  Clock
-} from 'lucide-react';
+import { AlertTriangle, Zap, Clock, Download, Code2, Cpu, MemoryStick, CheckSquare } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useSimulationState } from '@/context/SimulationContext';
+import { decodeHexToInstructions } from '@/lib/mips-decoder';
+import ForwardingArrow from './forwarding-arrow';
+import InstructionTooltip from './instruction-detail';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
-const STAGES = [
+export const STAGES = [
   { name: 'IF', icon: Download, description: 'Instruction Fetch' },
   { name: 'ID', icon: Code2, description: 'Instruction Decode' },
   { name: 'EX', icon: Cpu, description: 'Execute' },
   { name: 'MEM', icon: MemoryStick, description: 'Memory Access' },
   { name: 'WB', icon: CheckSquare, description: 'Write Back' },
-] as const;
-
-// Componente para mostrar paths de forwarding como flechas
-const ForwardingArrow: React.FC<{
-  fromStage: number;
-  toStage: number;
-  register: number;
-  className?: string;
-}> = ({ fromStage, toStage, register, className }) => {
-  return (
-    <div className={cn("absolute inset-0 pointer-events-none z-20", className)}>
-      <div className="relative w-full h-full">
-        {/* Flecha visual simplificada */}
-        <div className="absolute top-1/2 left-1/4 right-1/4 h-0.5 bg-blue-500 transform -translate-y-1/2">
-          <div className="absolute right-0 top-1/2 w-0 h-0 border-l-2 border-l-blue-500 border-t border-b border-transparent transform -translate-y-1/2" />
-        </div>
-        {/* Etiqueta del registro */}
-        <div className="absolute top-0 left-1/2 transform -translate-x-1/2 bg-blue-500 text-white text-xs px-1 rounded">
-          R{register}
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// Componente para mostrar información detallada de una instrucción
-const InstructionTooltip: React.FC<{
-  hex: string;
-  decoded: any;
-  isStall?: boolean;
-}> = ({ hex, decoded, isStall }) => {
-  if (isStall) {
-    return (
-      <div className="text-xs space-y-1">
-        <div className="font-medium text-orange-600">STALL (Bubble)</div>
-        <div className="text-muted-foreground">Pipeline paused due to hazard</div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="text-xs space-y-1">
-      <div className="font-medium">{hex}</div>
-      <div className="text-muted-foreground">
-        {decoded.isLoad && <Badge variant="outline" className="text-xs mr-1">Load</Badge>}
-        {decoded.isStore && <Badge variant="outline" className="text-xs mr-1">Store</Badge>}
-        Type: {decoded.type}
-      </div>
-      {decoded.readsFrom.length > 0 && (
-        <div>Reads: R{decoded.readsFrom.join(', R')}</div>
-      )}
-      {decoded.writesTo.length > 0 && (
-        <div>Writes: R{decoded.writesTo.join(', R')}</div>
-      )}
-    </div>
-  );
-};
+];
 
 export function PipelineVisualization() {
   const {
     instructions,
-    instructionStates,
     currentCycle,
     maxCycles,
-    isRunning,
     isFinished,
     forwardingPaths,
-    stallsThisCycle,
     stallsEnabled,
     forwardingEnabled,
-    loadUseHazards,
-    rawHazards,
-    // Nuevos estados acumulativos
-    totalStallsInserted,
-    instructionsWithLoadUseHazards,
-    instructionsWithRawHazards
+    pipelineHistory,
+    decodedInstructions
   } = useSimulationState();
 
-  // Derivar el estado de si la simulación ha comenzado
   const hasStarted = currentCycle > 0;
+  const [pipelineMatrix, setPipelineMatrix] = React.useState<{ [key: string]: { [cycle: number]: any } }>({});
 
-  // Generar columnas para mostrar - necesitamos más columnas para acomodar stalls
-  const totalCyclesToDisplay = Math.max(maxCycles, currentCycle + 5);
-  const cycleNumbers = Array.from({ length: totalCyclesToDisplay }, (_, i) => i + 1);
-
-  // Crear una matriz que represente el estado REAL del pipeline
-  // Esta vez usaremos el estado actual de las instrucciones, no una fórmula
-  const pipelineMatrix: { [key: string]: { [cycle: number]: any } } = {};
-
-  // Inicializar la matriz
-  instructions.forEach((hex, instIndex) => {
-    pipelineMatrix[instIndex] = {};
-  });
-
-  // Llenar la matriz con el estado actual REAL de las instrucciones
-  instructionStates.forEach(instState => {
-    if (instState.isStall) {
-      // Manejar bubbles/stalls - Ahora duplicamos la etapa IF
-      const stallKey = `stall-${instState.index}`;
-      if (!pipelineMatrix[stallKey]) {
-        pipelineMatrix[stallKey] = {};
+  // Referencia para el contenedor de la tabla
+  const tableContainerRef = React.useRef<HTMLDivElement>(null);
+  
+  // Estado para almacenar las posiciones de las celdas
+  const [cellPositions, setCellPositions] = React.useState<{[key: string]: DOMRect}>({});
+  
+  // Función para calcular y almacenar las posiciones de las celdas relevantes
+  const calculateCellPositions = React.useCallback(() => {
+    if (!tableContainerRef.current) return;
+    
+    const newPositions: {[key: string]: DOMRect} = {};
+    const cells = tableContainerRef.current.querySelectorAll('[data-cell-id]');
+    
+    cells.forEach((cell) => {
+      const cellId = cell.getAttribute('data-cell-id');
+      if (cellId) {
+        newPositions[cellId] = cell.getBoundingClientRect();
       }
+    });
+    
+    setCellPositions(newPositions);
+  }, []);
+  
+  // Calcular posiciones cuando cambia el ciclo actual o el historial
+  React.useEffect(() => {
+    calculateCellPositions();
+    // Agregar un pequeño retraso para asegurar que el DOM esté actualizado
+    const timer = setTimeout(calculateCellPositions, 100);
+    return () => clearTimeout(timer);
+  }, [currentCycle, pipelineHistory, calculateCellPositions]);
+  
+  // Recalcular posiciones en el resize de la ventana
+  React.useEffect(() => {
+    window.addEventListener('resize', calculateCellPositions);
+    return () => window.removeEventListener('resize', calculateCellPositions);
+  }, [calculateCellPositions]);
+
+  // Construir la matriz de visualización desde el historial
+  const buildVisualizationMatrix = () => {
+    const matrix: { [key: string]: { [cycle: number]: any } } = {};
+
+    instructions.forEach((_, idx) => {
+      matrix[`inst-${idx}`] = {};
+    });
+    
+    // Objeto para rastrear la última etapa vista para cada instrucción
+    const lastStageByInst: { [instIndex: number]: { cycle: number, stage: number } } = {};
+    
+    // Rastrear qué etapas específicas han participado en forwarding
+    const stagesWithForwarding = new Set<string>(); // formato: "instIndex-stage"
+    
+    // Procesar el historial de manera ordenada por ciclo
+    const sortedHistory = [...pipelineHistory].sort((a, b) => a.cycle - b.cycle);
+    
+    // Primer pasa: identificar todas las etapas específicas que han participado en forwarding
+    sortedHistory.forEach(snapshot => {
+      if (snapshot.forwardingPaths && snapshot.forwardingPaths.length > 0) {
+        snapshot.forwardingPaths.forEach(path => {
+          // Marcar la etapa específica que envía el forwarding
+          stagesWithForwarding.add(`${path.from.instructionIndex}-${path.from.stage}`);
+          // Marcar la etapa específica que recibe el forwarding
+          stagesWithForwarding.add(`${path.to.instructionIndex}-${path.to.stage}`);
+        });
+      }
+    });
+    
+    sortedHistory.forEach(snapshot => {
+      const cycle = snapshot.cycle;
       
-      if (instState.currentStage !== null) {
-        // Duplicar la etapa IF en el ciclo actual si hay stall
-        if (instState.currentStage === 0) { // Si es IF
-          pipelineMatrix[stallKey][currentCycle] = {
-            stage: instState.currentStage,
+      // Asegurarse de que tengamos datos válidos
+      if (!snapshot.stages || !Array.isArray(snapshot.stages)) return;
+      
+      // Determinar si hay stalls en este ciclo
+      const hasStallsThisCycle = snapshot.stallsInserted && snapshot.stallsInserted.length > 0;
+
+      // Procesar las etapas de cada instrucción en este ciclo
+      snapshot.stages.forEach((inst, stageIdx) => {
+        if (!inst) return; // Omitir etapas vacías
+        
+        // Solo procesar instrucciones reales (no stalls)
+        if (!inst.isStall) {
+          const instIndex = inst.index;
+          if (instIndex === undefined || instIndex < 0 || instIndex >= instructions.length) {
+            return; // Ignorar instrucciones con índices inválidos
+          }
+
+          // Verificar si esta etapa es una regresión (excepto en el primer ciclo)
+          const lastStage = lastStageByInst[instIndex];
+          if (lastStage) {
+            // Para etapas WB (4), permitimos que aparezca solo una vez
+            if (stageIdx === 4 && lastStage.stage === 4) return; // No duplicar etapas WB
+            
+            // No permitir retroceder a etapas anteriores
+            if (stageIdx < lastStage.stage && cycle > lastStage.cycle) return;
+          }
+
+          // Actualizar el seguimiento de la última etapa para esta instrucción
+          if (!lastStage || stageIdx >= lastStage.stage || cycle < lastStage.cycle) {
+            lastStageByInst[instIndex] = { cycle, stage: stageIdx };
+          }
+          
+          // Determinar si esta instrucción está afectada por el stall
+          let isStalled = false;
+          if (hasStallsThisCycle) {
+            // Si hay stalls, las etapas IF e ID se quedan congeladas
+            if (stageIdx <= 1) { // IF (0) e ID (1) se quedan donde están
+              isStalled = true;
+            }
+          }
+
+          // Determinar si hay forwarding activo en esta celda específica
+          let hasForwardingFromActive = false;
+          let hasForwardingToActive = false;
+          
+          if (snapshot.forwardingPaths && snapshot.forwardingPaths.length > 0) {
+            hasForwardingFromActive = snapshot.forwardingPaths.some(path => 
+              path.from.instructionIndex === instIndex && path.from.stage === stageIdx
+            );
+            hasForwardingToActive = snapshot.forwardingPaths.some(path => 
+              path.to.instructionIndex === instIndex && path.to.stage === stageIdx
+            );
+          }
+          
+          // Determinar si esta instrucción ha participado en forwarding en algún momento
+          const hasParticipatedInForwarding = stagesWithForwarding.has(`${instIndex}-${stageIdx}`);
+          
+          // Registrar la etapa en la matriz
+          matrix[`inst-${instIndex}`][cycle] = {
+            stage: stageIdx,
+            stageIdx,
+            hex: inst.hex,
+            isActive: cycle === currentCycle,
+            isPast: cycle < currentCycle,
+            isFuture: false,
+            decoded: inst.decoded,
+            isStalled: isStalled,
+            hasForwardingFromActive: hasForwardingFromActive,
+            hasForwardingToActive: hasForwardingToActive,
+            hasParticipatedInForwarding: hasParticipatedInForwarding // Nueva propiedad
+          };
+        }
+      });
+      
+      // Manejar bubbles/stalls
+      if (snapshot.stallsInserted && Array.isArray(snapshot.stallsInserted)) {
+        snapshot.stallsInserted.forEach(stallIdx => {
+          const bubbleKey = `bubble-${cycle}-${stallIdx}`;
+          if (!matrix[bubbleKey]) {
+            matrix[bubbleKey] = {};
+          }
+          matrix[bubbleKey][cycle] = {
+            stage: 2, // Los bubbles siempre van en EX
             isStall: true,
-            isActive: true,
-            isPast: false,
-            isFuture: false,
-            hex: instState.hex,
-            decoded: instState.decoded,
-            isStallDuplicate: true // Marcar como duplicado de stall
+            isActive: cycle === currentCycle,
+            hex: 'BUBBLE'
           };
-        }
-
-        // La instrucción original se mueve al siguiente ciclo
-        pipelineMatrix[stallKey][currentCycle + 1] = {
-          stage: instState.currentStage,
-          isStall: true,
-          isActive: true,
-          isPast: false,
-          isFuture: false,
-          hex: instState.hex,
-          decoded: instState.decoded,
-          hasStall: true // Marcar que tiene stall
-        };
-      }
-    } else {
-      // Manejar instrucciones normales con ajuste por stalls
-      if (instState.currentStage !== null && instState.index >= 0) {
-        const cycleOffset = instState.stallsInserted || 0;
-        pipelineMatrix[instState.index][currentCycle + cycleOffset] = {
-          stage: instState.currentStage,
-          isStall: false,
-          isActive: true,
-          isPast: false,
-          isFuture: false,
-          hex: instState.hex,
-          decoded: instState.decoded,
-          hasForwarding: forwardingPaths.some(path => 
-            (path.from.instructionIndex === instState.index && path.from.stage === instState.currentStage) ||
-            (path.to.instructionIndex === instState.index && path.to.stage === instState.currentStage)
-          )
-        };
-      }
-    }
-  });
-
-  // Para ciclos pasados, necesitamos reconstruir el historial
-  // Esto es una aproximación - en una implementación completa mantendríamos historial
-  for (let cycle = 1; cycle < currentCycle; cycle++) {
-    instructions.forEach((hex, instIndex) => {
-      // Aproximación: calcular dónde habría estado esta instrucción en ciclos pasados
-      // considerando que podría haber habido stalls
-      const expectedStage = cycle - instIndex - 1;
-      if (expectedStage >= 0 && expectedStage < STAGES.length) {
-        // Solo mostrar si no hay información más reciente
-        if (!pipelineMatrix[instIndex][cycle]) {
-          pipelineMatrix[instIndex][cycle] = {
-            stage: expectedStage,
-            isStall: false,
-            isActive: false,
-            isPast: true,
-            isFuture: false,
-            hex: hex,
-            decoded: null // No necesitamos decodificación para estados pasados
-          };
-        }
+        });
       }
     });
-  }
+    
+    return matrix;
+  };
 
-  // Para ciclos futuros, mostrar proyecciones (si no hay más stalls)
-  for (let cycle = currentCycle + 1; cycle <= totalCyclesToDisplay; cycle++) {
-    instructions.forEach((hex, instIndex) => {
-      const expectedStage = cycle - instIndex - 1;
-      if (expectedStage >= 0 && expectedStage < STAGES.length) {
-        if (!pipelineMatrix[instIndex][cycle]) {
-          pipelineMatrix[instIndex][cycle] = {
-            stage: expectedStage,
-            isStall: false,
-            isActive: false,
-            isPast: false,
-            isFuture: true,
-            hex: hex,
-            decoded: null
-          };
-        }
-      }
-    });
-  }
+  React.useEffect(() => {
+    const matrix = buildVisualizationMatrix();
+    setPipelineMatrix(matrix);
+  }, [instructions, currentCycle, pipelineHistory]);
+
+  const cycleNumbers = Array.from({ length: maxCycles }, (_, i) => i + 1);
 
   return (
     <Card className="w-full overflow-hidden">
@@ -234,311 +225,370 @@ export function PipelineVisualization() {
         <CardTitle className="flex items-center justify-between">
           <span>Pipeline Progress</span>
           <div className="flex gap-2">
-            {stallsEnabled && (
-              <Badge variant="outline" className="text-xs">
-                <AlertTriangle className="w-3 h-3 mr-1" />
-                Stalls: {stallsEnabled ? 'ON' : 'OFF'}
-              </Badge>
-            )}
-            {forwardingEnabled && (
-              <Badge variant="outline" className="text-xs">
-                <Zap className="w-3 h-3 mr-1" />
-                Forwarding: {forwardingEnabled ? 'ON' : 'OFF'}
-              </Badge>
-            )}
+            <Badge 
+              variant={stallsEnabled ? "default" : "outline"}
+              className={cn(
+                "text-xs transition-colors",
+                stallsEnabled 
+                  ? "bg-orange-500 hover:bg-orange-600 text-white" 
+                  : "bg-transparent text-orange-500 border-orange-500"
+              )}
+            >
+              <AlertTriangle className={cn("w-3 h-3 mr-1", stallsEnabled ? "text-white" : "text-orange-500")} />
+              Stalls: {stallsEnabled ? 'ON' : 'OFF'}
+            </Badge>
+            <Badge 
+              variant={forwardingEnabled ? "default" : "outline"}
+              className={cn(
+                "text-xs transition-colors",
+                forwardingEnabled 
+                  ? "bg-purple-500 hover:bg-purple-600 text-white" 
+                  : "bg-transparent text-purple-500 border-purple-500",
+                !stallsEnabled && "opacity-50" // Atenuar si stalls está desactivado
+              )}
+            >
+              <Zap className={cn("w-3 h-3 mr-1", forwardingEnabled ? "text-white" : "text-purple-500")} />
+              Forwarding: {forwardingEnabled ? 'ON' : 'OFF'}
+            </Badge>
           </div>
         </CardTitle>
       </CardHeader>
       <CardContent>
-        {/* Legend actualizada */}
         <div className="mb-4 flex flex-wrap gap-4 text-xs">
           <div className="flex items-center gap-1">
-            <div className="w-3 h-3 bg-blue-500 rounded"></div>
+            <div className="w-3 h-3 bg-accent rounded"></div>
             <span>Etapa Actual</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <div className="w-3 h-3 bg-yellow-200 rounded"></div>
-            <span>Forwarding</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <div className="w-3 h-3 bg-red-200 rounded"></div>
-            <span>Stall</span>
           </div>
           <div className="flex items-center gap-1">
             <div className="w-3 h-3 bg-secondary rounded"></div>
             <span>Etapa Pasada</span>
           </div>
+          <div className="flex items-center gap-1">
+            <div className="w-3 h-3 bg-purple-200 border border-purple-300 rounded"></div>
+            <span>Forwarding Activo</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <div className="w-5 h-5 bg-purple-700 text-white text-xs rounded-full flex items-center justify-center">
+              <span className="text-[10px]">S</span>
+            </div>
+            <span>Fuente de Forwarding</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <div className="w-5 h-5 bg-purple-700 text-white text-xs rounded-full flex items-center justify-center">
+              <span className="text-[10px]">D</span>
+            </div>
+            <span>Destino de Forwarding</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <div className="w-3 h-3 bg-orange-200 border border-orange-300 rounded"></div>
+            <span>Etapa en Stall</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <div className="w-3 h-3 bg-orange-300 rounded"></div>
+            <span>Bubble/Stall Activo</span>
+          </div>
         </div>
 
-        <div className="overflow-x-auto">
-          <Table className="min-w-max">
-            <TableCaption>
-              MIPS instruction pipeline visualization
-              {stallsEnabled && " with hazard detection"}
-              {forwardingEnabled && " and forwarding"}
-            </TableCaption>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-[200px] sticky left-0 bg-card z-10 border-r">
-                  Instruction
-                </TableHead>
-                {cycleNumbers.map((c) => (
-                  <TableHead key={`cycle-${c}`} className={cn(
-                    "text-center w-20",
-                    c === currentCycle && !isFinished && "bg-accent/20"
-                  )}>
-                    <div className="flex flex-col items-center">
-                      <span>Cycle {c}</span>
-                      {c === currentCycle && !isFinished && (
-                        <Clock className="w-3 h-3 mt-1 text-accent" />
-                      )}
-                    </div>
+        <div className="overflow-x-auto relative" ref={tableContainerRef}>
+          <TooltipProvider>
+            <Table className="min-w-max">
+              <TableCaption>
+                MIPS instruction pipeline visualization
+                {stallsEnabled && " with hazard detection"}
+                {forwardingEnabled && " and forwarding"}
+              </TableCaption>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-[200px] sticky left-0 bg-card z-10 border-r">
+                    Instruction
                   </TableHead>
-                ))}
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {/* Instrucciones normales */}
-              {instructions.map((inst, instIndex) => (
-                <TableRow key={`inst-${instIndex}`} className="even:bg-muted/5">
-                  <TableCell className="font-mono sticky left-0 bg-card z-10 border-r p-2">
-                    <div className="space-y-1">
-                      <div className="font-medium">{inst}</div>
-                      <div className="text-xs text-muted-foreground">
-                        Inst {instIndex + 1}
+                  {cycleNumbers.map((c) => (
+                    <TableHead key={`cycle-${c}`} className={cn(
+                      "text-center w-20",
+                      c === currentCycle && !isFinished && "bg-accent/20"
+                    )}>
+                      <div className="flex flex-col items-center">
+                        <span>Cycle {c}</span>
+                        {c === currentCycle && !isFinished && (
+                          <Clock className="w-3 h-3 mt-1 text-accent" />
+                        )}
                       </div>
-                      {/* Indicador de tipo de instrucción */}
-                      {instructionStates.some(is => 
-                        is.index === instIndex && is.decoded.isLoad
-                      ) && (
-                        <Badge variant="outline" className="text-xs bg-blue-50 text-blue-600 mt-1 sm">
-                          LOAD
-                        </Badge>
-                      )}
-                    </div>
-                  </TableCell>
-                  {cycleNumbers.map((c) => {
-                    const cellState = pipelineMatrix[instIndex]?.[c];
-                    
-                    if (!cellState) {
-                      return (
-                        <TableCell key={`inst-${instIndex}-cycle-${c}`} className="text-center w-20 h-16 border-l border-muted/20" />
-                      );
-                    }
-
-                    const currentStageData = STAGES[cellState.stage];
-                    const isCurrentCycle = c === currentCycle;
-                    const isActiveCycle = cellState.isActive && isCurrentCycle;
-                    const isPastCycle = cellState.isPast;
-                    const isFutureCycle = cellState.isFuture;
-                    
-                    // Verificar si hay forwarding desde/hacia esta célula
-                    const hasForwardingFrom = forwardingPaths.some(path => 
-                      path.from.instructionIndex === instIndex && 
-                      path.from.stage === cellState.stage &&
-                      isCurrentCycle
-                    );
-                    
-                    const hasForwardingTo = forwardingPaths.some(path => 
-                      path.to.instructionIndex === instIndex && 
-                      path.to.stage === cellState.stage &&
-                      isCurrentCycle
-                    );
-
-                    // Verificar si esta instrucción tiene un hazard
-                    const hasLoadUseHazard = loadUseHazards.includes(instIndex) && isCurrentCycle && cellState.stage === 1;
-                    const hasRawHazard = rawHazards.includes(instIndex) && isCurrentCycle && cellState.stage === 1;
-
-                    // Estado específico para instrucción bloqueada por hazard
-                    const isBlockedByHazard = (hasLoadUseHazard || hasRawHazard) && isCurrentCycle;
-
-                    // Condición mejorada para determinar si la instrucción está activa en el ciclo actual
-                    const isActiveStage = isCurrentCycle && cellState.isActive;
-
-                    return (
-                      <TableCell
-                        key={`inst-${instIndex}-cycle-${c}`}
-                        className={cn(
-                          'text-center w-20 h-16 relative transition-all duration-300 border-l border-muted/20',
-                          // Coloreado actualizado para matching con la referencia
-                          isFinished ? 'bg-background' :
-                          cellState.hasStall ? 'bg-red-200' :
-                          cellState.hasForwarding ? 'bg-yellow-200' :
-                          isActiveStage ? 'bg-blue-500 text-white shadow-sm' :
-                          isPastCycle ? 'bg-secondary/60' :
-                          'bg-background',
-                          // Animación solo para etapas activas sin stall
-                          isActiveStage && isRunning && !cellState.hasStall && 'animate-[pulse_2s_ease-in-out_infinite]'
-                        )}
-                        style={{
-                          // Asegurarse de que no haya problemas con la animación en filas pares
-                          animationDelay: isActiveStage && isRunning ? `${instIndex * 0.1}s` : '0s'
-                        }}
-                      >
-                        {currentStageData && !isFinished && (
-                          <div className="flex flex-col items-center justify-center h-full relative">
-                            <currentStageData.icon className={cn(
-                              "w-5 h-5 mb-1",
-                              isActiveStage && "text-white", // Asegurar que el icono sea visible en la etapa actual
-                              isFutureCycle && "opacity-40",
-                              isBlockedByHazard && "text-red-600"
-                            )} aria-hidden="true" />
-                            <span className={cn(
-                              "text-xs font-medium",
-                              isActiveStage && "text-white font-bold", // Texto más destacado en la etapa actual
-                              isFutureCycle && "opacity-40",
-                              isBlockedByHazard && "font-bold"
-                            )}>
-                              {currentStageData.name}
-                              {isActiveStage && <span className="ml-1">C{c}</span>} {/* Mostrar número de ciclo en la etapa activa */}
-                            </span>
-                            
-                            {/* Indicadores de hazard */}
-                            {hasLoadUseHazard && (
-                              <div className="absolute top-0 left-0 w-full h-full flex items-center justify-center">
-                                <div className="absolute -top-1 -right-1 bg-purple-500 text-white text-xs px-1 py-0.5 rounded leading-none">
-                                  Load-Use
-                                </div>
-                              </div>
-                            )}
-                            
-                            {hasRawHazard && !hasLoadUseHazard && (
-                              <div className="absolute top-0 left-0 w-full h-full flex items-center justify-center">
-                                <div className="absolute -top-1 -right-1 bg-red-500 text-white text-xs px-1 py-0.5 rounded leading-none">
-                                  RAW
-                                </div>
-                              </div>
-                            )}
-                            
-                            {/* Indicadores de forwarding con mejor visibilidad */}
-                            {hasForwardingFrom && (
-                              <div className="absolute -top-1 -right-1 bg-blue-500 text-white text-xs px-1 rounded-full leading-none shadow-sm">
-                                →
-                              </div>
-                            )}
-                            {hasForwardingTo && (
-                              <div className="absolute -top-1 -left-1 bg-green-500 text-white text-xs px-1 rounded-full leading-none shadow-sm">
-                                ←
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </TableCell>
-                    );
-                  })}
+                    </TableHead>
+                  ))}
                 </TableRow>
-              ))}
+              </TableHeader>
+              <TableBody>
+                {/* Instrucciones normales */}
+                {instructions.map((inst, instIndex) => (
+                  <TableRow key={`inst-${instIndex}`}>
+                    <TableCell className="font-mono sticky left-0 bg-card z-10 border-r p-2">
+                      <div className="space-y-1">
+                        <div className="font-medium">{inst}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {(() => {
+                            const decoded = decodedInstructions[instIndex];
+                            return (decodeHexToInstructions(decoded, instIndex))
+                          })()}
+                        </div>
+                      </div>
+                    </TableCell>
+                    {cycleNumbers.map((c) => {
+                      const cellData = pipelineMatrix[`inst-${instIndex}`]?.[c];
+                      
+                      if (!cellData) {
+                        return (
+                          <TableCell key={`inst-${instIndex}-cycle-${c}`} 
+                            className="text-center w-20 h-16 border-l border-muted/20" />
+                        );
+                      }
 
-              {/* Fila separada para mostrar stalls cuando ocurren */}
-              {Object.keys(pipelineMatrix).some(key => key.startsWith('stall-')) && (
-                <TableRow className="border-t-2 border-dashed border-orange-300 bg-orange-50/50">
-                  <TableCell className="font-mono sticky left-0 bg-orange-50 z-10 border-r p-2">
-                    <div className="space-y-1">
-                      <div className="font-medium text-orange-600 flex items-center gap-1">
-                        <AlertTriangle className="w-4 h-4" />
-                        BUBBLES
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        Pipeline Stalls
-                      </div>
-                    </div>
-                  </TableCell>
-                  {cycleNumbers.map((c) => {
-                    // Buscar si hay algún stall en este ciclo
-                    const stallInThisCycle = Object.keys(pipelineMatrix).find(key => 
-                      key.startsWith('stall-') && pipelineMatrix[key][c]?.isStall
-                    );
-                    
-                    const cellState = stallInThisCycle ? pipelineMatrix[stallInThisCycle][c] : null;
+                      const stageData = STAGES[cellData.stage];
+                      const hasActiveForwarding = cellData.hasForwardingFromActive || cellData.hasForwardingToActive;
+                      const hasForwardingHistory = cellData.hasParticipatedInForwarding;
+
+                      // Buscar información de forwarding para este ciclo y celda
+                      const forwardingInfo = forwardingPaths.filter(path => 
+                        (path.from.instructionIndex === instIndex && path.from.stage === cellData.stage) || 
+                        (path.to.instructionIndex === instIndex && path.to.stage === cellData.stage)
+                      );
+
+                      return (
+                        <TableCell
+                          key={`inst-${instIndex}-cycle-${c}`}
+                          data-cell-id={`cell-${instIndex}-${c}-${cellData.stage}`}
+                          className={cn(
+                            'text-center w-20 h-16 relative transition-all duration-300 border-l border-muted/20',
+                            // Prioridad de colores: Forwarding activo > Forwarding histórico > Stall > Estado normal
+                            hasActiveForwarding ? 'bg-purple-300 border-purple-400' : // Forwarding activo (más intenso)
+                            hasForwardingHistory ? 'bg-purple-100 border-purple-200' : // Forwarding histórico (más sutil)
+                            cellData.isStalled ? 'bg-orange-200 border-orange-300' : // Color de stall
+                            cellData.isActive && !isFinished ? 'bg-accent text-accent-foreground' :
+                            cellData.isPast ? 'bg-secondary/60' :
+                            'bg-background'
+                          )}
+                        >
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <div className="flex flex-col items-center justify-center h-full w-full cursor-pointer">
+                                {stageData && (
+                                  <>
+                                    <stageData.icon className={cn(
+                                      "w-5 h-5 mb-1",
+                                      hasActiveForwarding ? "text-purple-800" : // Forwarding activo (más oscuro)
+                                      hasForwardingHistory ? "text-purple-600" : // Forwarding histórico (medio)
+                                      cellData.isStalled ? "text-orange-700" : ""
+                                    )} />
+                                    <span className={cn(
+                                      "text-xs font-medium",
+                                      hasActiveForwarding ? "text-purple-800" : // Forwarding activo (más oscuro)
+                                      hasForwardingHistory ? "text-purple-600" : // Forwarding histórico (medio)
+                                      cellData.isStalled ? "text-orange-700" : ""
+                                    )}>
+                                      {stageData.name}
+                                    </span>
+                                    
+                                    {/* Indicadores de forwarding mejorados */}
+                                    {forwardingInfo.map((fwInfo, idx) => {
+                                      // Determinar si esta celda es fuente o destino
+                                      const isSource = fwInfo.from.instructionIndex === instIndex && fwInfo.from.stage === cellData.stage;
+                                      const isDestination = fwInfo.to.instructionIndex === instIndex && fwInfo.to.stage === cellData.stage;
+                                      
+                                      if (!isSource && !isDestination) return null;
+                                      
+                                      return (
+                                        <div 
+                                          key={`fw-${idx}`}
+                                          className={cn(
+                                            "absolute bg-purple-700 text-white text-xs rounded-full flex items-center justify-center shadow-md",
+                                            isSource 
+                                              ? "-top-2 -right-2 w-6 h-6 z-30" 
+                                              : "-top-2 -left-2 w-6 h-6 z-30"
+                                          )}
+                                          title={isSource 
+                                            ? `Envía R${fwInfo.register} a instrucción ${fwInfo.to.instructionIndex + 1}` 
+                                            : `Recibe R${fwInfo.register} de instrucción ${fwInfo.from.instructionIndex + 1}`
+                                          }
+                                        >
+                                          <span className="text-[10px] font-bold">{isSource ? 'S' : 'D'}</span>
+                                          <span className="text-[8px] absolute bottom-0 right-0 bg-purple-900 rounded-full w-3 h-3 flex items-center justify-center">
+                                            {fwInfo.register}
+                                          </span>
+                                        </div>
+                                      );
+                                    })}
+                                  </>
+                                )}
+                              </div>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" className="p-2 max-w-xs bg-white shadow-lg rounded border z-50">
+                              <InstructionTooltip 
+                                hex={inst}
+                                decoded={cellData.decoded || {
+                                  type: 'Unknown',
+                                  readsFrom: [],
+                                  writesTo: [],
+                                  isLoad: false,
+                                  isStore: false
+                                }}
+                                isStall={false}
+                              />
+                              {/* Añadir información de forwarding al tooltip si existe */}
+                              {forwardingInfo.length > 0 && (
+                                <div className="mt-2 pt-2 border-t border-gray-200">
+                                  <div className="font-medium text-xs text-purple-700">Forwarding activo:</div>
+                                  <ul className="text-xs mt-1 space-y-1">
+                                    {forwardingInfo.map((fw, idx) => {
+                                      const isSource = fw.from.instructionIndex === instIndex && fw.from.stage === cellData.stage;
+                                      return (
+                                        <li key={idx} className="flex items-center gap-1">
+                                          {isSource 
+                                            ? `Envía R${fw.register} a instrucción ${fw.to.instructionIndex + 1} (${STAGES[fw.to.stage].name})`
+                                            : `Recibe R${fw.register} de instrucción ${fw.from.instructionIndex + 1} (${STAGES[fw.from.stage].name})`
+                                          }
+                                        </li>
+                                      );
+                                    })}
+                                  </ul>
+                                </div>
+                              )}
+                            </TooltipContent>
+                          </Tooltip>
+                        </TableCell>
+                      );
+                    })}
+                  </TableRow>
+                ))}
+                
+                {/* Bubbles/Stalls */}
+                {Object.keys(pipelineMatrix)
+                  .filter(key => key.startsWith('bubble-'))
+                  .map((bubbleKey) => {
+                    // Extraer el ciclo del bubble key (bubble-[cycle]-[stallIdx])
+                    const cyclePart = bubbleKey.split('-')[1];
                     
                     return (
-                      <TableCell key={`stall-cycle-${c}`} className={cn(
-                        'text-center w-20 h-16 border-l border-muted/20',
-                        cellState ? 'bg-orange-200' : 'bg-orange-50/20'
-                      )}>
-                        {cellState && (
-                          <div className="flex flex-col items-center justify-center h-full">
-                            <AlertTriangle className="w-5 h-5 mb-1 text-orange-600" />
-                            <span className="text-xs font-medium text-orange-600">NOP</span>
-                            <div className="absolute bottom-0 right-0 text-xs opacity-50 text-orange-500">
-                              C{c}
+                      <TableRow key={bubbleKey} className="border-t border-orange-300">
+                        <TableCell className="font-mono sticky left-0 bg-orange-50 z-10 border-r p-2">
+                          <div className="space-y-1">
+                            <div className="font-medium text-orange-600 flex items-center gap-1">
+                              <AlertTriangle className="w-4 h-4" />
+                              STALL (Ciclo {cyclePart})
                             </div>
                           </div>
-                        )}
-                      </TableCell>
+                        </TableCell>
+                        {cycleNumbers.map((c) => {
+                          const bubbleData = pipelineMatrix[bubbleKey][c];
+                          
+                          return (
+                            <TableCell key={`${bubbleKey}-cycle-${c}`} className={cn(
+                              'text-center w-20 h-16 border-l border-muted/20',
+                              bubbleData && c === currentCycle ? 'bg-orange-300' :
+                              bubbleData ? 'bg-orange-200' : ''
+                            )}>
+                              {bubbleData && (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <div className="flex flex-col items-center justify-center h-full cursor-pointer">
+                                      <AlertTriangle className="w-5 h-5 mb-1 text-orange-600" />
+                                      <span className="text-xs font-medium text-orange-600">BUBBLE</span>
+                                    </div>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="top" className="p-2 max-w-xs bg-white shadow-lg rounded border z-50">
+                                    <InstructionTooltip 
+                                      hex="BUBBLE"
+                                      decoded={{}}
+                                      isStall={true}
+                                    />
+                                  </TooltipContent>
+                                </Tooltip>
+                              )}
+                            </TableCell>
+                          );
+                        })}
+                      </TableRow>
                     );
-                  })}
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
+                })}
+              </TableBody>
+            </Table>
+          </TooltipProvider>
+          
+          {/* Capa para las flechas de forwarding */}
+          <div className="absolute inset-0 pointer-events-none">
+            {forwardingPaths.map((path, index) => {
+              const fromCellId = `cell-${path.from.instructionIndex}-${currentCycle}-${path.from.stage}`;
+              const toCellId = `cell-${path.to.instructionIndex}-${currentCycle}-${path.to.stage}`;
+              
+              const fromRect = cellPositions[fromCellId];
+              const toRect = cellPositions[toCellId];
+              
+              if (!fromRect || !toRect) return null;
+              
+              // Calcular posición y dimensiones para la flecha
+              const containerRect = tableContainerRef.current?.getBoundingClientRect();
+              if (!containerRect) return null;
+              
+              const left = (fromRect.left - containerRect.left) + (fromRect.width / 2);
+              const top = (fromRect.top - containerRect.top) + (fromRect.height / 2);
+              const width = ((toRect.left - containerRect.left) + (toRect.width / 2)) - left;
+              
+              return (
+                <div 
+                  key={`arrow-${index}`}
+                  className="absolute bg-purple-500 h-1"
+                  style={{
+                    left: `${left}px`,
+                    top: `${top}px`,
+                    width: `${Math.abs(width)}px`,
+                    transform: width < 0 ? 'scaleX(-1)' : 'none'
+                  }}
+                >
+                  {/* Punta de flecha */}
+                  <div className="absolute right-0 top-1/2 transform -translate-y-1/2 w-0 h-0 border-l-4 border-l-purple-500 border-y-4 border-y-transparent" />
+                  
+                  {/* Etiqueta de registro */}
+                  <div className="absolute top-0 left-1/2 transform -translate-x-1/2 -translate-y-full bg-purple-500 text-white text-xs px-1 rounded">
+                    R{path.register}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
 
-        {/* Estadísticas de hazards - Actualizado para mostrar tanto actuales como acumulados */}
-        {(stallsEnabled || forwardingEnabled) && hasStarted && (
-          <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+        {hasStarted && (
+          <div className="mt-4 grid grid-cols-1 md:grid-cols-4 gap-4 text-sm">
             <div className="p-3 bg-muted/50 rounded-md">
               <div className="font-medium">Hazards Detectados</div>
-              <div className="flex justify-between items-baseline">
-                <div className="text-2xl font-bold text-orange-600 flex items-baseline gap-2">
-                  {stallsThisCycle.length}
-                  <span className="text-xs text-muted-foreground">actuales</span>
-                </div>
-                <div className="text-xl font-medium text-orange-600 flex items-baseline gap-1">
-                  {totalStallsInserted}
-                  <span className="text-xs text-muted-foreground">total</span>
-                </div>
+              <div className="text-2xl font-bold text-orange-600">
+                {pipelineHistory.reduce((acc, snapshot) => 
+                  acc + snapshot.stallsInserted.length, 0)}
               </div>
-              
-              <div className="flex items-center justify-between mt-2">
-                <div className="flex items-center gap-1">
-                  <div className="w-2 h-2 bg-purple-400 rounded-full"></div>
-                  <div className="text-xs text-purple-700">
-                    {loadUseHazards.length} <span className="opacity-75">actual</span>
-                  </div>
-                </div>
-                <div className="text-xs text-purple-700 font-medium">
-                  {instructionsWithLoadUseHazards.size} <span className="opacity-75">total Load-Use</span>
-                </div>
-              </div>
-              
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-1">
-                  <div className="w-2 h-2 bg-red-400 rounded-full"></div>
-                  <div className="text-xs text-red-700">
-                    {rawHazards.length} <span className="opacity-75">actual</span>
-                  </div>
-                </div>
-                <div className="text-xs text-red-700 font-medium">
-                  {instructionsWithRawHazards.size} <span className="opacity-75">total RAW</span>
-                </div>
-              </div>
+              <div className="text-xs text-muted-foreground">total en la simulación</div>
             </div>
             
             <div className="p-3 bg-muted/50 rounded-md">
               <div className="font-medium">Forwarding Activo</div>
-              <div className="text-2xl font-bold text-blue-600">
+              <div className="text-2xl font-bold text-purple-600">
                 {forwardingPaths.length}
               </div>
-              <div className="text-xs text-muted-foreground">paths actuales</div>
-              {stallsEnabled && (
-                <div className="text-xs text-green-600 mt-2">
-                  {forwardingPaths.length > 0 ? 
-                    `Evitando ${forwardingPaths.length} stalls en este ciclo` : 
-                    'Sin forwarding activo'}
-                </div>
-              )}
+              <div className="text-xs text-muted-foreground">paths en este ciclo</div>
+            </div>
+            
+            <div className="p-3 bg-muted/50 rounded-md">
+              <div className="font-medium">Total Forwarding</div>
+              <div className="text-2xl font-bold text-purple-600">
+                {pipelineHistory.reduce((acc, snapshot) => 
+                  acc + (snapshot.forwardingPaths?.length || 0), 0)}
+              </div>
+              <div className="text-xs text-muted-foreground">paths totales</div>
             </div>
             
             <div className="p-3 bg-muted/50 rounded-md">
               <div className="font-medium">Progreso</div>
               <div className="text-2xl font-bold text-green-600">
-                {Math.round((currentCycle / Math.max(maxCycles, 1)) * 100)}%
+                {isFinished ? '100' : Math.round((currentCycle / Math.max(maxCycles, 1)) * 100)}%
               </div>
               <div className="text-xs text-muted-foreground">completado</div>
-              <div className="text-xs mt-2">
-                Ciclo <span className="font-medium">{currentCycle}</span> de {maxCycles}
-              </div>
             </div>
           </div>
         )}
