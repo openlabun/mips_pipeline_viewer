@@ -15,6 +15,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Download, Code2, Cpu, MemoryStick, CheckSquare } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useSimulationState } from '@/context/SimulationContext'; // Import context hook
+import { ForwardingArrow, ArrowHeadDefs } from './ui/line';
 
 const STAGES = [
   { name: 'IF', icon: Download },
@@ -52,7 +53,7 @@ export function PipelineVisualization() {
         <CardTitle>Pipeline Progress</CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto relative">
           <Table className="min-w-max">
             <TableCaption>MIPS instruction pipeline visualization</TableCaption>
             <TableHeader>
@@ -73,7 +74,10 @@ export function PipelineVisualization() {
                   <TableCell className="font-mono sticky left-0 bg-card z-10 border-r">
                     {inst}
                   </TableCell>
+                  
                   {cycleNumbers.map((c) => {
+                    
+                    
                     // Determine the stage for this instruction *at this cycle column 'c'*
                     // Instruction 'instIndex' entered stage 's' at cycle 'instIndex + s + 1'
                     // So, at cycle 'c', the stage index is 'c - instIndex - 1'
@@ -100,6 +104,8 @@ export function PipelineVisualization() {
                     return (
                       <TableCell
                         key={`inst-${instIndex}-cycle-${c}`}
+                        data-row={instIndex}
+                        data-col={c}
                         className={cn(
                           'text-center w-16 h-14 transition-colors duration-300',
                           // 1. If simulation is completed, reset all cells to default background
@@ -114,6 +120,7 @@ export function PipelineVisualization() {
                           isPastStage ? 'bg-secondary text-secondary-foreground' :
                           // 5. Otherwise (future stage or empty cell), use default background
                           'bg-background'
+                          
                         )}
                       >
                         {/* Show icon/name if the stage should be active in this cycle column AND simulation is not completed */}
@@ -130,6 +137,13 @@ export function PipelineVisualization() {
               ))}
             </TableBody>
           </Table>
+          <svg className="absolute top-0 left-0 w-full h-full pointer-events-none z-20">
+          <ArrowHeadDefs />
+            {forwardOrigin && stuckCell && (
+              <ForwardingArrow from={forwardOrigin as [number,number]} to={stuckCell as [number,number]} dashed={true} animate={true} />
+            )}
+</svg>
+
         </div>
       </CardContent>
     </Card>
