@@ -49,7 +49,7 @@ const initialState: SimulationState = {
 };
 let blockindex=-2
 //cambiar por logica de cambio
-const isStall=false
+const isStall=true
 // Function to calculate the next state based on the current state
 const calculateNextState = (currentState: SimulationState): SimulationState => {
   if (!currentState.isRunning || currentState.isFinished) {
@@ -80,12 +80,14 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
           activeInstructions++
           nextCycle--
           blockindex=index+1
+          newInstructionStages[index] =(currentState.instructionStages[index]||0)
           }else {        
           if (Stall(i2,i1) && ((currentState.instructionStages[index-1]??-1))+3 < currentState.stageCount && !currentState.instructionFinished[index-1]){
           console.log("aqui hay un stall")
           activeInstructions++
           nextCycle--
           blockindex=index+1
+          newInstructionStages[index] =(currentState.instructionStages[index]||0)
         }
         else{
       if (index==blockindex) {
@@ -110,7 +112,7 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
       }}
       //FW logic
       else {
-        if (stageIndex==1 && currentState.instructions[index-1]){
+        if (stageIndex==2 && currentState.instructions[index-1]){
         const i1= decodeInstruction(currentState.instructions[index])
         const i2= decodeInstruction(currentState.instructions[index-1])
         if (currentState.instructions[index-2]){
@@ -133,10 +135,13 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
           nextCycle--
           blockindex=index+1
           }
+        }else{
+          newInstructionStages[index] =(currentState.instructionStages[index]??-1)+1
+          activeInstructions++
         }
       if (!canForward(i2,i1)[1]){
       if (index==blockindex) {
-        blockindex=index+1
+        blockindex=-2
       }else
       {
 
