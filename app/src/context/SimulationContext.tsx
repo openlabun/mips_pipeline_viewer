@@ -49,7 +49,7 @@ const initialState: SimulationState = {
 };
 let blockindex=-2
 //cambiar por logica de cambio
-const isStall=true
+const isStall=false
 // Function to calculate the next state based on the current state
 const calculateNextState = (currentState: SimulationState): SimulationState => {
   if (!currentState.isRunning || currentState.isFinished) {
@@ -112,7 +112,7 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
       }}
       //FW logic
       else {
-        if (stageIndex==2 && currentState.instructions[index-1]){
+        if (stageIndex==1 && currentState.instructions[index-1]){
         const i1= decodeInstruction(currentState.instructions[index])
         const i2= decodeInstruction(currentState.instructions[index-1])
         if (currentState.instructions[index-2]){
@@ -134,6 +134,7 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
           activeInstructions++
           nextCycle--
           blockindex=index+1
+          newInstructionStages[index] =(currentState.instructionStages[index]??1)
           }
         }else{
           newInstructionStages[index] =(currentState.instructionStages[index]??-1)+1
@@ -148,7 +149,7 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
       newInstructionStages[index] =(currentState.instructionStages[index]??-1)+1
       activeInstructions++}
     }  else{
-      newInstructionStages[index] =(currentState.instructionStages[index]??-1)
+      newInstructionStages[index] =((currentState.instructionStages[index]??1)<=1?1:currentState.instructionStages[index])
       activeInstructions++
       }
       
