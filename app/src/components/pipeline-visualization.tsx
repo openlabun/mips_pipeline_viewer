@@ -108,11 +108,18 @@ export function PipelineVisualization() {
                       >
                         {/* Show icon/name if the stage should be active in this cycle column AND simulation is not completed */}
                         {currentStageData && !isFinished && (
-                           <div className="flex flex-col items-center justify-center">
-                             <currentStageData.icon className="w-4 h-4 mb-1" aria-hidden="true" />
-                             <span className="text-xs">{currentStageData.name}</span>
-                           </div>
-                         )}
+                          inst === '00000000' && currentStageData.name !== 'IF' ? (
+                            <div className="flex items-center justify-center text-xs font-semibold text-blue-600">
+                              BUBBLE
+                            </div>
+                          ) : (
+                            <div className="flex flex-col items-center justify-center">
+                              <currentStageData.icon className="w-4 h-4 mb-1" aria-hidden="true" />
+                              <span className="text-xs">{currentStageData.name}</span>
+                            </div>
+                          )
+                        )}
+
                       </TableCell>
                     );
                   })}

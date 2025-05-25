@@ -54,19 +54,28 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
   const newInstructionStages: Record<number, number | null> = {};
   let activeInstructions = 0;
 
-  currentState.instructions.forEach((_, index) => {
-    // Calculate the stage index for the instruction in the next cycle
-    // Instruction `index` enters stage `s` (0-based) at cycle `index + s + 1`
-    // So, in cycle `c`, the stage is `c - index - 1`
+    currentState.instructions.forEach((inst, index) => {
+    const isNop = inst === '00000000';
     const stageIndex = nextCycle - index - 1;
 
-    if (stageIndex >= 0 && stageIndex < currentState.stageCount) {
-      newInstructionStages[index] = stageIndex;
-      activeInstructions++; // Count instructions currently in the pipeline
+    if (isNop) {
+      if (stageIndex === 0) {
+        // NOP solo aparece en IF
+        newInstructionStages[index] = 0;
+        activeInstructions++;
+      } else {
+        newInstructionStages[index] = null; // Desaparece del pipeline
+      }
     } else {
-      newInstructionStages[index] = null; // Not in pipeline (either hasn't started or has finished)
+      if (stageIndex >= 0 && stageIndex < currentState.stageCount) {
+        newInstructionStages[index] = stageIndex;
+        activeInstructions++;
+      } else {
+        newInstructionStages[index] = null;
+      }
     }
   });
+
 
   // The simulation completes *after* the last instruction finishes the last stage
   const completionCycle = currentState.instructions.length > 0
