@@ -1,5 +1,5 @@
 // Definición de los posibles estados de una etapa del pipeline
-type PipelineStage = "IF" | "ID" | "EX" | "MEM" | "WB" | "ALL" | "";
+type PipelineStage = "IF" | "ID" | "EX" | "MEM" | "WB" | "STALL" | "";
 interface InstructionMeta {
     type: "R" | "I" | "J";
     raw: string;
@@ -157,89 +157,65 @@ function printPipelineTable(matrix: PipelineStage[][]) {
 
 // Función que simula el pipeline con manejo de stalls (paradas)
 function simulatePipelineWithStall(hexInstructions: string[]): PipelineStage[][] {
-    const limit: number = 15;
     const STAGES: PipelineStage[] = ["IF", "ID", "EX", "MEM", "WB"];
     const n = hexInstructions.length;
-    let mats: PipelineStage[][] = [];
-    for (let i = 0; i < n; i++) {
-        mats.push([]);
-    }
-    let currentState: {[key: string]: string} = {"IF": "", "ID":"", "EX":"", "MEM":"", "WB":""} ;
+    let mats: PipelineStage[][] = Array(n).fill(null).map(() => []);
+    let currentState: {[key: string]: string} = {"IF": "", "ID": "", "EX": "", "MEM": "", "WB": ""};
     const analyzed = hexInstructions.map(analyzeInstruction);
 
-    //console.log(analyzed)
-    let cycle: number = 0;
-    let inst: number = 0;
-    while (true && cycle < limit){
-        let isStall: boolean = false
-        // Se verifica si va haber Stall en el siguiente estado
-        if (currentState["ID"] !== "" && currentState["EX"] !== "" ){
-            let ID: string[] = analyzed[Number(currentState["ID"])]["readsFrom"];
-            let EX: string | undefined = analyzed[Number(currentState["EX"])].writesTo;
-            if (typeof EX === "string" && ID.includes(EX)){
-                isStall = true;
-            }
+    let cycle = 0;
+    let inst = 0;
+    
+    while (true) {
+        // Verificar stalls antes de avanzar
+        let isStall = false;
+        if (currentState["ID"] !== "" && currentState["EX"] !== "") {
+            const ID = analyzed[Number(currentState["ID"])].readsFrom;
+            const EX = analyzed[Number(currentState["EX"])].writesTo;
+            if (EX && ID.includes(EX)) isStall = true;
         }
-        if (currentState["ID"] !== "" && currentState["MEM"] !== "" ){
-            let ID: string[] = analyzed[Number(currentState["ID"])]["readsFrom"];
-            let MEM: string | undefined = analyzed[Number(currentState["MEM"])].writesTo;
-            if (typeof MEM === "string" && ID.includes(MEM)){
-                isStall = true;
-            }
+        if (currentState["ID"] !== "" && currentState["MEM"] !== "") {
+            const ID = analyzed[Number(currentState["ID"])].readsFrom;
+            const MEM = analyzed[Number(currentState["MEM"])].writesTo;
+            if (MEM && ID.includes(MEM)) isStall = true;
         }
-        // Si no hay Stall todas las fases cambian de estado
-        if(!isStall){
-            for (let i = STAGES.length-1; i >= 0; i--) {
-                if (i == 0) {
-                    if (inst < n ){
-                        currentState[STAGES[i]] = String(inst);
-                        inst++
-                    }else{
-                        currentState[STAGES[i]] = "";
-                    }
-                    
-                }else{
-                    currentState[STAGES[i]] = currentState[STAGES[i-1]]
+
+        // Avanzar el pipeline
+        if (!isStall) {
+            // Avance normal
+            for (let i = STAGES.length - 1; i >= 0; i--) {
+                if (i === 0) {
+                    currentState[STAGES[i]] = inst < n ? String(inst++) : "";
+                } else {
+                    currentState[STAGES[i]] = currentState[STAGES[i-1]];
                 }
             }
-            for (let i = 0; i < mats.length; i++){
-                let agg = ""
-                for (const llave in currentState){
-                    if (currentState[llave] !== "" && Number(currentState[llave]) === i) {
-                        agg = llave;
-                    }
-                }
-                mats[i].push(agg as PipelineStage)
-            }
-        }else{ // Si hay Stall solo se deja que avance EX Y MEM
-            for (let i = STAGES.length-1; i >= 1; i--) {
-                if (i == 2) {
-                    currentState[STAGES[i]] = "";
-                }
-                if(i>2){
-                    currentState[STAGES[i]] = currentState[STAGES[i-1]]
-                }
-            }
-            for (let i = 0; i < mats.length; i++){
-                let agg = ""
-                for (const llave in currentState){
-                    if (currentState[llave] !== "" && Number(currentState[llave]) === i){
-                        if (llave == "IF" || llave == "ID") {
-                            agg = "ALL";
-                        }else{
-                            agg = llave;
-                        }
-                    }
-                }
-                mats[i].push(agg as PipelineStage)
-            }
+        } else {
+            // Stall - solo avanzan EX, MEM, WB
+            currentState["WB"] = currentState["MEM"];
+            currentState["MEM"] = currentState["EX"];
+            currentState["EX"] = "";
+            // IF e ID permanecen iguales (stall)
         }
-        console.log(currentState, inst-1, isStall,cycle)
-        if (Number(currentState["WB"]) === n-1){
-            break
+
+        // Actualizar matriz
+        for (let i = 0; i < n; i++) {
+            let stage: PipelineStage = "";
+            for (const [pipeStage, pipeInst] of Object.entries(currentState)) {
+                if (pipeInst === String(i)) {
+                    stage = isStall && (pipeStage === "IF" || pipeStage === "ID") 
+                        ? "STALL" 
+                        : pipeStage as PipelineStage;
+                }
+            }
+            mats[i].push(stage);
         }
+
+        // Condición de terminación
+        if (currentState["WB"] === String(n - 1)) break;
         cycle++;
     }
+
     return mats;
 }
 
