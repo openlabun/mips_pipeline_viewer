@@ -1,74 +1,78 @@
-// src/components/instruction-input.tsx
-"use client";
+import { useState, useEffect } from "react"
+import { Label } from "@/components/ui/label"
+import { Textarea } from "@/components/ui/textarea"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { useSimulationActions, useSimulationState } from "@/context/SimulationContext"
+import { Play, Pause, RotateCcw } from "lucide-react"
 
-import type * as React from 'react';
-import { useState, useEffect } from 'react';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { useSimulationActions, useSimulationState } from '@/context/SimulationContext'; // Import context hooks
-import { Play, Pause, RotateCcw } from 'lucide-react';
+// Regex para 8 caracteres hexadecimales
+const HEX_REGEX = /^[0-9a-fA-F]{8}$/
 
+// Tipos para las props
 interface InstructionInputProps {
-  onInstructionsSubmit: (instructions: string[]) => void;
-  onReset: () => void;
-  isRunning: boolean; // Keep isRunning prop for button state logic
+  onInstructionsSubmit: (instructions: string[], isForwarding: boolean) => void
+  onReset: () => void
+  isRunning: boolean
 }
 
-const HEX_REGEX = /^[0-9a-fA-F]{8}$/; // Basic check for 8 hex characters
+export function InstructionInput({
+  onInstructionsSubmit,
+  onReset,
+  isRunning,
+}: InstructionInputProps) {
+  const [inputText, setInputText] = useState<string>("")
+  const [error, setError] = useState<string | null>(null)
+  const [isForwarding, setIsForwarding] = useState<boolean>(false)
 
-export function InstructionInput({ onInstructionsSubmit, onReset, isRunning }: InstructionInputProps) {
-  const [inputText, setInputText] = useState<string>('');
-  const [error, setError] = useState<string | null>(null);
-  const { pauseSimulation, resumeSimulation } = useSimulationActions();
-  const { currentCycle, isFinished, instructions } = useSimulationState(); // Get state from context
+  const { pauseSimulation, resumeSimulation } = useSimulationActions()
+  const { currentCycle, isFinished, instructions } = useSimulationState()
 
-  // Reset input text when instructions are cleared (e.g., on reset)
   useEffect(() => {
     if (instructions.length === 0) {
-      setInputText('');
-      setError(null); // Clear errors on reset as well
+      setInputText("")
+      setError(null)
     }
-  }, [instructions]);
+  }, [instructions])
 
-
-  const hasStarted = currentCycle > 0;
-  // Can only pause/resume if started and not finished
-  const canPauseResume = hasStarted && !isFinished;
-  // Input/Start button should be disabled if simulation has started and isn't finished
-  const disableInputAndStart = hasStarted && !isFinished;
-
+  const hasStarted = currentCycle > 0
+  const canPauseResume = hasStarted && !isFinished
+  const disableInputAndStart = hasStarted && !isFinished
 
   const handleSubmit = () => {
-    setError(null);
-    const lines = inputText.trim().split('\n');
+    setError(null)
+    const lines = inputText.trim().split("\n")
     const currentInstructions = lines
-      .map(line => line.trim())
-      .filter(line => line.length > 0);
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
 
     if (currentInstructions.length === 0) {
-      setError('Please enter at least one MIPS instruction in hexadecimal format.');
-      return;
+      setError("Please enter at least one MIPS instruction in hexadecimal format.")
+      return
     }
 
-    const invalidInstructions = currentInstructions.filter(inst => !HEX_REGEX.test(inst));
+    const invalidInstructions = currentInstructions.filter(
+      (inst) => !HEX_REGEX.test(inst)
+    )
     if (invalidInstructions.length > 0) {
-      setError(`Invalid instruction format found: ${invalidInstructions.join(', ')}. Each instruction must be 8 hexadecimal characters.`);
-      return;
+      setError(
+        `Invalid instruction format found: ${invalidInstructions.join(
+          ", "
+        )}. Each instruction must be 8 hexadecimal characters.`
+      )
+      return
     }
 
-    onInstructionsSubmit(currentInstructions);
-  };
+    onInstructionsSubmit(currentInstructions, isForwarding) // ← Pasa el valor aquí
+  }
 
   const handlePauseResume = () => {
-    if (isRunning) {
-      pauseSimulation();
-    } else {
-      resumeSimulation();
-    }
-  };
+    isRunning ? pauseSimulation() : resumeSimulation()
+  }
 
+  const toggleForwarding = () => {
+    setIsForwarding((prev) => !prev)
+  }
 
   return (
     <Card className="w-full max-w-md">
@@ -80,38 +84,61 @@ export function InstructionInput({ onInstructionsSubmit, onReset, isRunning }: I
           <Label htmlFor="instructions">Enter Hex Instructions (one per line)</Label>
           <Textarea
             id="instructions"
-            placeholder="e.g., 00a63820..." // Removed 0x prefix for consistency with regex
+            placeholder="e.g., 00a63820..."
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
             rows={5}
             className="font-mono"
-            // Disable input field if simulation has started and not yet finished
             disabled={disableInputAndStart}
             aria-label="MIPS Hex Instructions Input"
           />
           {error && <p className="text-sm text-destructive">{error}</p>}
         </div>
         <div className="flex justify-between items-center gap-2">
-           {/* Start Button: Disabled if started and not finished */}
-          <Button onClick={handleSubmit} disabled={disableInputAndStart} className="flex-1">
-             {isFinished ? 'Finished' : hasStarted ? 'Running...' : 'Start Simulation'}
+          {/* Botón FW */}
+          <Button
+            onClick={toggleForwarding}
+            disabled={hasStarted && !isFinished}
+            className={
+              isForwarding
+                ? "bg-yellow-400 hover:bg-yellow-300 text-black"
+                : "bg-gray-600 hover:bg-gray-500 text-white"
+            }
+            size="sm"
+          >
+            FW
           </Button>
 
-          {/* Conditional Play/Pause Button: Show only when pause/resume is possible */}
+          {/* Start Button */}
+          <Button onClick={handleSubmit} disabled={disableInputAndStart} className="flex-1">
+            {isFinished ? "Restart Simulation" : hasStarted ? "Running..." : "Start Simulation"}
+          </Button>
+
+          {/* Play/Pause Button */}
           {canPauseResume && (
-             <Button variant="outline" onClick={handlePauseResume} size="icon" aria-label={isRunning ? 'Pause Simulation' : 'Resume Simulation'}>
+            <Button
+              variant="outline"
+              onClick={handlePauseResume}
+              size="icon"
+              aria-label={isRunning ? "Pause Simulation" : "Resume Simulation"}
+            >
               {isRunning ? <Pause /> : <Play />}
-             </Button>
+            </Button>
           )}
 
-          {/* Reset Button: Show only if the simulation has started */}
-           {hasStarted && (
-              <Button variant="destructive" onClick={onReset} size="icon" aria-label="Reset Simulation">
-                <RotateCcw />
-              </Button>
-           )}
+          {/* Reset Button */}
+          {hasStarted && (
+            <Button
+              variant="destructive"
+              onClick={onReset}
+              size="icon"
+              aria-label="Reset Simulation"
+            >
+              <RotateCcw />
+            </Button>
+          )}
         </div>
       </CardContent>
     </Card>
-  );
+  )
 }

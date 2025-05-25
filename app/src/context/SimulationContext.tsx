@@ -1,39 +1,55 @@
-// src/context/SimulationContext.tsx
-"use client"; // Add 'use client' directive
+"use client";
 
 import type { PropsWithChildren } from 'react';
 import * as React from 'react';
+import { hexToBinary, BinaryToInstruction, FetchInstruction } from '../utils/InstructionFetch';
 
-// Define the stage names (optional, but good for clarity)
-const STAGE_NAMES = ['IF', 'ID', 'EX', 'MEM', 'WB'] as const;
+const STAGE_NAMES = ["IF", "ID", "EX", "MEM", "WB"] as const;
 type StageName = typeof STAGE_NAMES[number];
 
-// Define the shape of the context state
+interface ForwardingEvent {
+  cycle: number;
+  stage: number; // 0: IF, 1: ID, 2: EX, 3: MEM, 4: WB
+  type: 'EX' | 'MEM';
+  reg: 'rs' | 'rt';
+  instrIndex: number;
+}
+
+interface ForwardingCycleInfo {
+  hasEXForwarding: boolean;
+  hasMEMForwarding: boolean;
+}
+
 interface SimulationState {
   instructions: string[];
   currentCycle: number;
   maxCycles: number;
   isRunning: boolean;
   stageCount: number;
-  // Map instruction index to its current stage index (0-based) or null if not started/finished
   instructionStages: Record<number, number | null>;
-  isFinished: boolean; // Track if simulation completed
+  isFinished: boolean;
+  pipelineHistory: (FetchInstruction | null)[][];
+  forwardingEvents?: ForwardingEvent[]; // <--- NUEVO
+  forwardingCycles?: ForwardingCycleInfo[]; // <--- NUEVO
 }
 
-// Define the shape of the context actions
 interface SimulationActions {
-  startSimulation: (submittedInstructions: string[]) => void;
+  startSimulation: (submittedInstructions: string[], isForwarding: boolean) => void;
   resetSimulation: () => void;
   pauseSimulation: () => void;
   resumeSimulation: () => void;
 }
 
-// Create the contexts
 const SimulationStateContext = React.createContext<SimulationState | undefined>(undefined);
 const SimulationActionsContext = React.createContext<SimulationActions | undefined>(undefined);
 
-const DEFAULT_STAGE_COUNT = STAGE_NAMES.length; // Use length of defined stages
+// NUEVO CONTEXTO: estado del forwarding
+const SimulationForwardingContext = React.createContext<{
+  isForwarding: boolean;
+  toggleForwarding: () => void;
+} | undefined>(undefined);
 
+const DEFAULT_STAGE_COUNT = STAGE_NAMES.length;
 const initialState: SimulationState = {
   instructions: [],
   currentCycle: 0,
@@ -42,12 +58,159 @@ const initialState: SimulationState = {
   stageCount: DEFAULT_STAGE_COUNT,
   instructionStages: {},
   isFinished: false,
+  pipelineHistory: [],
+  forwardingCycles: []
 };
 
-// Function to calculate the next state based on the current state
+function calculatePipelineCyclesWithStalls(
+  instructions: FetchInstruction[],
+  forward: boolean
+): {
+  pipeline: (FetchInstruction | null)[][];
+  finalStageInstructions: string[];
+  forwardingCycles: ForwardingCycleInfo[];
+} {
+  const stageCount = DEFAULT_STAGE_COUNT;
+  const pipeline: (FetchInstruction | null)[][] = [];
+  const finalStageInstructions: string[] = [];
+  const forwardingCycles: ForwardingCycleInfo[] = [];
+
+  const queue = [...instructions];
+  const currentStage: (FetchInstruction | null)[] = Array(stageCount).fill(null);
+  const stall: FetchInstruction = { instruction: 'STALL', opcode: '111111', RegWrite: false };
+
+  const getReg = (inst: any, reg: 'rs' | 'rt' | 'rd') =>
+    inst && inst[reg] ? inst[reg] : null;
+  const getRegWrite = (inst: any) =>
+    typeof inst?.RegWrite === 'boolean' ? inst.RegWrite : false;
+  while (true) {
+    let hazardDetection: 'EX' | 'MEM' | null = null;
+    const ifId = currentStage[0];
+    const idEx = currentStage[1];
+    const exMem = currentStage[2];
+    const memWb = currentStage[3];
+    
+    // Inicializa los booleanos de forwarding para este ciclo
+    let hasEXForwarding = false;
+    let hasMEMForwarding = false;
+    if (forward) {
+      const rs = getReg(ifId, 'rs');
+      const rt = getReg(ifId, 'rt');
+    
+      // EX Hazard
+      if (
+        exMem &&
+        getRegWrite(exMem) &&
+        getReg(exMem, 'rd') !== '00000' &&
+        (
+          getReg(exMem, 'rd') === getReg(idEx, 'rs') ||
+          getReg(exMem, 'rd') === getReg(idEx, 'rt')
+        )
+      ) {
+        hasEXForwarding = true;
+      }
+
+      // MEM Hazard
+      if (
+        memWb &&
+        getRegWrite(memWb)  &&
+        getReg(memWb, 'rd') !== '00000' &&
+        (
+          (
+            (!exMem || getReg(exMem, 'rd') !== getReg(idEx, 'rs')) &&
+            getReg(memWb, 'rd') === getReg(idEx, 'rs')
+          ) ||
+          (
+            (!exMem || getReg(exMem, 'rd') !== getReg(idEx, 'rt')) &&
+            getReg(memWb, 'rd') === getReg(idEx, 'rt')
+          )
+        )
+      ) {
+        hasMEMForwarding = true;
+      }
+    }
+
+    // ...hazard/stall logic igual que antes...
+    if (ifId && ifId.instruction !== 'STALL') {
+      const rs = getReg(ifId, 'rs');
+      const rt = getReg(ifId, 'rt');
+
+      if (
+        idEx &&
+        idEx.instruction !== 'STALL' &&
+        getRegWrite(idEx) &&
+        getReg(idEx, 'rd') &&
+        getReg(idEx, 'rd') !== '00000' &&
+        (getReg(idEx, 'rd') === rs || getReg(idEx, 'rd') === rt)
+      ) {
+        hazardDetection = 'EX';
+      }
+
+      if (
+        (exMem &&
+          exMem.instruction !== 'STALL' &&
+          getRegWrite(exMem) &&
+          getReg(exMem, 'rd') &&
+          getReg(exMem, 'rd') !== '00000' &&
+          (getReg(exMem, 'rd') === rs || getReg(exMem, 'rd') === rt)) ||
+        (memWb &&
+          memWb.instruction !== 'STALL' &&
+          getRegWrite(memWb) &&
+          getReg(memWb, 'rd') &&
+          getReg(memWb, 'rd') !== '00000' &&
+          (getReg(memWb, 'rd') === rs || getReg(memWb, 'rd') === rt))
+      ) {
+        hazardDetection = 'MEM';
+      }
+    }
+
+    if (forward) {
+      hazardDetection = hazardDetection === 'EX' && idEx?.opcode === '100011' ? hazardDetection : null;
+    }
+
+    const stageCalc =
+      hazardDetection === 'EX'
+        ? stageCount - 4
+        : hazardDetection === 'MEM'
+        ? stageCount - 3
+        : 0;
+
+    for (let i = stageCount - 1; i > stageCalc; i--) {
+      currentStage[i] = currentStage[i - 1];
+    }
+
+    switch (hazardDetection) {
+      case 'EX':
+        currentStage[1] = stall;
+        break;
+      case 'MEM':
+        currentStage[2] = stall;
+        break;
+      default:
+        currentStage[0] = queue.length > 0 ? queue.shift()! : null;
+        break;
+    }
+
+    if (queue.length === 0 && currentStage.every(stage => stage === null)) {
+      break;
+    }
+
+    const exiting = currentStage[stageCount - 1];
+    if (exiting !== null) {
+      finalStageInstructions.push(exiting.instruction);
+    }
+
+    pipeline.push([...currentStage]);
+    forwardingCycles.push({ hasEXForwarding, hasMEMForwarding }); // Guarda los booleanos de este ciclo
+
+  }
+
+  return { pipeline, finalStageInstructions, forwardingCycles };
+}
+
 const calculateNextState = (currentState: SimulationState): SimulationState => {
   if (!currentState.isRunning || currentState.isFinished) {
-    return currentState; // No changes if not running or already finished
+    return currentState;
   }
 
   const nextCycle = currentState.currentCycle + 1;
@@ -55,40 +218,34 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
   let activeInstructions = 0;
 
   currentState.instructions.forEach((_, index) => {
-    // Calculate the stage index for the instruction in the next cycle
-    // Instruction `index` enters stage `s` (0-based) at cycle `index + s + 1`
-    // So, in cycle `c`, the stage is `c - index - 1`
     const stageIndex = nextCycle - index - 1;
-
     if (stageIndex >= 0 && stageIndex < currentState.stageCount) {
       newInstructionStages[index] = stageIndex;
-      activeInstructions++; // Count instructions currently in the pipeline
+      activeInstructions++;
     } else {
-      newInstructionStages[index] = null; // Not in pipeline (either hasn't started or has finished)
+      newInstructionStages[index] = null;
     }
   });
 
-  // The simulation completes *after* the last instruction finishes the last stage
   const completionCycle = currentState.instructions.length > 0
-    ? currentState.instructions.length + currentState.stageCount - 1
+    ? currentState.maxCycles
     : 0;
 
   const isFinished = nextCycle > completionCycle;
-  const isRunning = !isFinished; // Stop running when finished
+  const isRunning = !isFinished;
 
   return {
     ...currentState,
-    currentCycle: isFinished ? completionCycle : nextCycle, // Cap cycle at completion
+    currentCycle: isFinished ? completionCycle : nextCycle,
     instructionStages: newInstructionStages,
-    isRunning: isRunning,
-    isFinished: isFinished,
+    isRunning,
+    isFinished,
   };
 };
 
-
-// Create the provider component
 export function SimulationProvider({ children }: PropsWithChildren) {
   const [simulationState, setSimulationState] = React.useState<SimulationState>(initialState);
+  const [isForwarding, setIsForwarding] = React.useState<boolean>(false);
   const intervalRef = React.useRef<NodeJS.Timeout | null>(null);
 
   const clearTimer = () => {
@@ -99,120 +256,111 @@ export function SimulationProvider({ children }: PropsWithChildren) {
   };
 
   const runClock = React.useCallback(() => {
-    clearTimer(); // Clear any existing timer
-    if (!simulationState.isRunning || simulationState.isFinished) return; // Don't start timer if not running or finished
+    clearTimer();
+    if (!simulationState.isRunning || simulationState.isFinished) return;
 
     intervalRef.current = setInterval(() => {
       setSimulationState((prevState) => {
         const nextState = calculateNextState(prevState);
-        // Check if the simulation just finished in this step
         if (nextState.isFinished && !prevState.isFinished) {
-           clearTimer(); // Stop the clock immediately
+          clearTimer();
         }
         return nextState;
       });
-    }, 1000); // Advance cycle every 1 second
-  }, [simulationState.isRunning, simulationState.isFinished]); // Dependencies
-
+    }, 1000);
+  }, [simulationState.isRunning, simulationState.isFinished]);
 
   const resetSimulation = React.useCallback(() => {
     clearTimer();
     setSimulationState(initialState);
+    setIsForwarding(false); // ← REINICIAR ESTADO
   }, []);
 
-  const startSimulation = React.useCallback((submittedInstructions: string[]) => {
-    clearTimer(); // Clear previous timer just in case
+  const startSimulation = React.useCallback((submittedInstructions: string[], isForwardingParam: boolean) => {
+    clearTimer();
     if (submittedInstructions.length === 0) {
-      resetSimulation(); // Reset if no instructions submitted
+      resetSimulation();
       return;
     }
 
-    const calculatedMaxCycles = submittedInstructions.length + DEFAULT_STAGE_COUNT - 1;
-    const initialStages: Record<number, number | null> = {};
-    // Initialize stages for cycle 1
-    submittedInstructions.forEach((_, index) => {
-        const stageIndex = 1 - index - 1; // Calculate stage for cycle 1
-        if (stageIndex >= 0 && stageIndex < DEFAULT_STAGE_COUNT) {
-            initialStages[index] = stageIndex;
-        } else {
-            initialStages[index] = null;
-        }
-    });
+    setIsForwarding(isForwardingParam); // ← Actualiza el estado global de forwarding
 
+    const Instructions: FetchInstruction[] = submittedInstructions
+      .map(hexToBinary)
+      .map(BinaryToInstruction)
+      .filter((inst): inst is FetchInstruction => inst !== null);
+
+    const { pipeline, finalStageInstructions, forwardingCycles } = calculatePipelineCyclesWithStalls(Instructions, isForwardingParam);
+    const initialStages: Record<number, number | null> = {};
+
+    submittedInstructions.forEach((_, index) => {
+      const stageIndex = 1 - index - 1;
+      initialStages[index] = stageIndex >= 0 && stageIndex < DEFAULT_STAGE_COUNT ? stageIndex : null;
+    });
 
     setSimulationState({
-      instructions: submittedInstructions,
-      currentCycle: 1, // Start from cycle 1
-      maxCycles: calculatedMaxCycles,
+      instructions: finalStageInstructions,
+      currentCycle: 1,
+      maxCycles: pipeline.length,
       isRunning: true,
       stageCount: DEFAULT_STAGE_COUNT,
-      instructionStages: initialStages, // Set initial stages for cycle 1
+      instructionStages: initialStages,
       isFinished: false,
+      pipelineHistory: pipeline,
+      forwardingCycles // <--- agrega esto
     });
-    // runClock will be triggered by the useEffect below when isRunning becomes true
   }, [resetSimulation]);
 
-   const pauseSimulation = () => {
-     setSimulationState((prevState) => {
-       if (prevState.isRunning) {
-         clearTimer();
-         return { ...prevState, isRunning: false };
-       }
-       return prevState; // No change if already paused
-     });
-   };
-
+  const pauseSimulation = () => {
+    setSimulationState((prevState) => {
+      if (prevState.isRunning) {
+        clearTimer();
+        return { ...prevState, isRunning: false };
+      }
+      return prevState;
+    });
+  };
+  
   const resumeSimulation = () => {
-     setSimulationState((prevState) => {
-        // Resume only if paused, started, and not finished
-        if (!prevState.isRunning && prevState.currentCycle > 0 && !prevState.isFinished) {
-            return { ...prevState, isRunning: true };
-        }
-        return prevState; // No change if running, not started, or finished
-     });
-     // runClock will be triggered by useEffect
-   };
+    setSimulationState((prevState) => {
+      if (!prevState.isRunning && prevState.currentCycle > 0 && !prevState.isFinished) {
+        return { ...prevState, isRunning: true };
+      }
+      return prevState;
+    });
+  };
 
-
-  // Effect to manage the interval timer based on isRunning state
   React.useEffect(() => {
     if (simulationState.isRunning && !simulationState.isFinished) {
       runClock();
     } else {
       clearTimer();
     }
-    // Cleanup timer on unmount or when isRunning/isFinished changes
     return clearTimer;
   }, [simulationState.isRunning, simulationState.isFinished, runClock]);
 
-
-  // State value derived directly from simulationState
-  const stateValue: SimulationState = simulationState;
-
-  const actionsValue: SimulationActions = React.useMemo(
-    () => ({
-      startSimulation,
-      resetSimulation,
-      pauseSimulation,
-      resumeSimulation,
-    }),
-    [startSimulation, resetSimulation] // pause/resume don't change
-  );
+  const toggleForwarding = () => setIsForwarding(prev => !prev);
 
   return (
-    <SimulationStateContext.Provider value={stateValue}>
-      <SimulationActionsContext.Provider value={actionsValue}>
-        {children}
+    <SimulationStateContext.Provider value={simulationState}>
+      <SimulationActionsContext.Provider
+        value={{ startSimulation, resetSimulation, pauseSimulation, resumeSimulation }}
+      >
+        <SimulationForwardingContext.Provider
+          value={{ isForwarding, toggleForwarding }}
+        >
+          {children}
+        </SimulationForwardingContext.Provider>
       </SimulationActionsContext.Provider>
     </SimulationStateContext.Provider>
   );
 }
 
-// Custom hooks for easy context consumption
+// Hooks
 export function useSimulationState() {
   const context = React.useContext(SimulationStateContext);
   if (context === undefined) {
-    throw new Error('useSimulationState must be used within a SimulationProvider');
+    throw new Error("useSimulationState must be used within a SimulationProvider");
   }
   return context;
 }
@@ -220,7 +368,15 @@ export function useSimulationState() {
 export function useSimulationActions() {
   const context = React.useContext(SimulationActionsContext);
   if (context === undefined) {
-    throw new Error('useSimulationActions must be used within a SimulationProvider');
+    throw new Error("useSimulationActions must be used within a SimulationProvider");
+  }
+  return context;
+}
+
+export function useSimulationForwarding() {
+  const context = React.useContext(SimulationForwardingContext);
+  if (context === undefined) {
+    throw new Error("useSimulationForwarding must be used within a SimulationProvider");
   }
   return context;
 }
