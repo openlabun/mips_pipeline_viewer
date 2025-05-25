@@ -83,15 +83,15 @@ export default {
   					height: '0'
   				}
   			},
-        'pulse-bg': { // Added animation keyframes
-          '0%, 100%': { opacity: 1 },
-          '50%': { opacity: .7 },
+        'pulse-bg': {
+          '0%, 100%': { opacity: '1' },
+          '50%': { opacity: '0.7' },
         }
   		},
   		animation: {
   			'accordion-down': 'accordion-down 0.2s ease-out',
   			'accordion-up': 'accordion-up 0.2s ease-out',
-        'pulse-bg': 'pulse-bg 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite', // Added animation utility
+        'pulse-bg': 'pulse-bg 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite',
   		}
   	}
   },

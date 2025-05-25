@@ -8,6 +8,10 @@ body {
 
 @layer base {
   :root {
+    --stall: 0 84.2% 60.2%; /* Red */
+    --stall-foreground: 0 0% 98%;
+    --forwarding: 45 93% 47%; /* Yellow */
+    --forwarding-foreground: 0 0% 20%;
     --background: 0 0% 96.1%; /* #F5F5F5 Neutral gray */
     --foreground: 0 0% 20%; /* #333 Dark gray */
     --card: 0 0% 100%; /* White */
@@ -45,6 +49,10 @@ body {
   .dark {
     /* Keeping dark mode defaults, but ideally these should also be updated */
     /* For this request, we'll focus on the light mode theme */
+    --stall: 0 62.8% 30.6%;
+    --stall-foreground: 0 0% 98%;
+    --forwarding: 45 93% 47%;
+    --forwarding-foreground: 0 0% 9%;
     --background: 0 0% 3.9%;
     --foreground: 0 0% 98%;
     --card: 0 0% 3.9%;
