@@ -66,7 +66,7 @@ const initialState: SimulationState = {
   stageCount: DEFAULT_STAGE_COUNT,
   instructionStages: {},
   isFinished: false,
-  stallHandling: 'stall', //aqui se cambia el valor
+  stallHandling: 'stall',
   stalledInstructions: new Set(),
   stallHistory: [],
   pipelineMatrix: [],
@@ -209,75 +209,90 @@ function analyzeInstruction(hex: string): InstructionMeta {
 }
 
 function simulatePipelineWithStall(hexInstructions: string[]): PipelineStage[][] {
+    const limit: number = 15;
     const STAGES: PipelineStage[] = ["IF", "ID", "EX", "MEM", "WB"];
     const n = hexInstructions.length;
+    let mats: PipelineStage[][] = [];
+    for (let i = 0; i < n; i++) {
+        mats.push([]);
+    }
+    let currentState: {[key: string]: string} = {"IF": "", "ID":"", "EX":"", "MEM":"", "WB":""} ;
     const analyzed = hexInstructions.map(analyzeInstruction);
 
-    // Calcula el máximo de ciclos posible (instrucciones + etapas + stalls)
-    let maxCycles = n + STAGES.length + 10; // margen extra
-
-    // Inicializa la matriz de pipeline
-    const pipeline: PipelineStage[][] = Array.from({ length: n }, () =>
-        Array(maxCycles).fill("")
-    );
-
-    // Lleva el ciclo de inicio de cada instrucción
-    const startCycles: number[] = [];
-
-    let currentCycle = 0;
-    for (let i = 0; i < n; i++) {
-        // Determina el ciclo de inicio considerando stalls por dependencias
-        let stall = 0;
-        if (i > 0) {
-            for (let j = 0; j < i; j++) {
-                // ¿Hay dependencia RAW?
-                const prev = analyzed[j];
-                const curr = analyzed[i];
-                if (
-                    prev.writesTo &&
-                    curr.readsFrom.includes(prev.writesTo)
-                ) {
-                    // ¿Cuándo estará disponible el registro?
-                    const prevStart = startCycles[j];
-                    const writeStage = prev.name === "lw" ? 3 : 4; // MEM o WB (0-indexed: 3 o 4)
-                    const availableCycle = prevStart + writeStage;
-                    const neededCycle = currentCycle + 1; // La instrucción lo necesita en ID
-                    if (neededCycle < availableCycle) {
-                        stall = Math.max(stall, availableCycle - neededCycle);
+    //console.log(analyzed)
+    let cycle: number = 0;
+    let inst: number = 0;
+    while (true){
+        let isStall: boolean = false
+        // Se verifica si va haber Stall en el siguiente estado
+        if (currentState["ID"] !== "" && currentState["EX"] !== "" ){
+            let ID: string[] = analyzed[Number(currentState["ID"])]["readsFrom"];
+            let EX: string | undefined = analyzed[Number(currentState["EX"])].writesTo;
+            if (typeof EX === "string" && ID.includes(EX)){
+                isStall = true;
+            }
+        }
+        if (currentState["ID"] !== "" && currentState["MEM"] !== "" ){
+            let ID: string[] = analyzed[Number(currentState["ID"])]["readsFrom"];
+            let MEM: string | undefined = analyzed[Number(currentState["MEM"])].writesTo;
+            if (typeof MEM === "string" && ID.includes(MEM)){
+                isStall = true;
+            }
+        }
+        // Si no hay Stall todas las fases cambian de estado
+        if(!isStall){
+            for (let i = STAGES.length-1; i >= 0; i--) {
+                if (i == 0) {
+                    if (inst < n ){
+                        currentState[STAGES[i]] = String(inst);
+                        inst++
+                    }else{
+                        currentState[STAGES[i]] = "";
                     }
+                    
+                }else{
+                    currentState[STAGES[i]] = currentState[STAGES[i-1]]
                 }
             }
-        }
-        
-        // Agregar stalls antes de empezar la instrucción
-        for (let s = 0; s < stall; s++) {
-            pipeline[i][currentCycle + s] = "STALL";
-        }
-        
-        currentCycle += stall;
-        startCycles.push(currentCycle);
-
-        // Rellena la matriz con las etapas
-        for (let stageIdx = 0; stageIdx < STAGES.length; stageIdx++) {
-            pipeline[i][currentCycle + stageIdx] = STAGES[stageIdx];
-        }
-        
-        currentCycle++; // La siguiente instrucción entra al siguiente ciclo
-    }
-
-    // Recorta las columnas vacías al final
-    let lastUsed = 0;
-    for (let i = 0; i < n; i++) {
-        for (let c = pipeline[i].length - 1; c >= 0; c--) {
-            if (pipeline[i][c] !== "") {
-                lastUsed = Math.max(lastUsed, c);
-                break;
+            for (let i = 0; i < mats.length; i++){
+                let agg = ""
+                for (const llave in currentState){
+                    if (currentState[llave] !== "" && Number(currentState[llave]) === i) {
+                        agg = llave;
+                    }
+                }
+                mats[i].push(agg as PipelineStage)
+            }
+        }else{ // Si hay Stall solo se deja que avance EX Y MEM
+            for (let i = STAGES.length-1; i >= 1; i--) {
+                if (i == 2) {
+                    currentState[STAGES[i]] = "";
+                }
+                if(i>2){
+                    currentState[STAGES[i]] = currentState[STAGES[i-1]]
+                }
+            }
+            for (let i = 0; i < mats.length; i++){
+                let agg = ""
+                for (const llave in currentState){
+                    if (currentState[llave] !== "" && Number(currentState[llave]) === i){
+                        if (llave == "IF" || llave == "ID") {
+                            agg = "STALL";
+                        }else{
+                            agg = llave;
+                        }
+                    }
+                }
+                mats[i].push(agg as PipelineStage)
             }
         }
+        console.log(currentState, inst-1, isStall,cycle)
+        if (Number(currentState["WB"]) === n-1){
+            break
+        }
+        cycle++;
     }
-    
-    // Devuelve solo las columnas necesarias
-    return pipeline.map(row => row.slice(0, lastUsed + 1));
+    return mats;
 }
 
 // Function to get current stage of instruction based on pipeline matrix
@@ -345,7 +360,7 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
           newStallHistory.push({
             cycle: nextCycle,
             instruction: index,
-            reason: `Data hazard detected`
+            reason: "Data hazard detected"
           });
         }
       } else {
@@ -435,7 +450,8 @@ export function SimulationProvider({ children }: PropsWithChildren) {
 
     if (areHexInstructions && simulationState.stallHandling === 'stall') {
       try {
-        pipelineMatrix = simulatePipelineWithStall(submittedInstructions);
+        pipelineMatrix = simulatePipelineWithStall(submittedInstructions)
+
         analyzedInstructions = submittedInstructions.map(analyzeInstruction);
         calculatedMaxCycles = pipelineMatrix[0]?.length || calculatedMaxCycles;
       } catch (error) {
@@ -508,7 +524,6 @@ export function SimulationProvider({ children }: PropsWithChildren) {
       pipelineMatrix: handling === 'default' ? [] : prevState.pipelineMatrix,
     }));
   }, []);
-
 
   // Effect to manage the interval timer based on isRunning state
   React.useEffect(() => {
