@@ -224,8 +224,7 @@ export function PipelineVisualization() {
                                 {hazards[instIndex].type}
                               </Badge>
                               {hazards[instIndex].canForward &&
-                                forwardings[instIndex]?.length > 0 &&
-                                stalls[instIndex] === 0 && (
+                                forwardings[instIndex]?.length > 0 && (
                                   <Badge className='border px-2 bg-green-100 text-green-500 border-green-500 rounded-lg'>
                                     FORWARDING
                                   </Badge>
