@@ -21,6 +21,9 @@ interface SimulationState {
   instructionStages: Record<number, number | null>;
   isFinished: boolean; // Track if simulation completed
   instructionFinished: Record<number, boolean>;
+  stuckCell: number[] | null;
+  forwardOrigin: number[] | null;
+  isStall: boolean;
 }
 
 // Define the shape of the context actions
@@ -50,10 +53,12 @@ const initialState: SimulationState = {
   instructionStages: {},
   instructionFinished: {},
   isFinished: false,
+  stuckCell: null,
+  forwardOrigin: null,
+  isStall: false
 };
 let blockindex = -2;
 //cambiar por logica de cambio
-const isStall = false;
 // Function to calculate the next state based on the current state
 const calculateNextState = (currentState: SimulationState): SimulationState => {
   if (!currentState.isRunning || currentState.isFinished) {
@@ -61,6 +66,8 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
   }
 
   let nextCycle = currentState.currentCycle + 1;
+  let newStuckCell = currentState.stuckCell;
+  let newForwardOrigin = currentState.forwardOrigin;
   const newInstructionStages: Record<number, number | null> = {};
   let activeInstructions = 0;
   currentState.instructions.forEach((_, index) => {
@@ -76,7 +83,7 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
       !currentState.instructionFinished[index]
     ) {
       //complete stall logic
-      if (isStall) {
+      if (currentState.isStall) {
         if (stageIndex == 0 && currentState.instructions[index - 1]) {
           const i1 = decodeInstruction(currentState.instructions[index]);
           const i2 = decodeInstruction(currentState.instructions[index - 1]);
@@ -94,6 +101,7 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
               blockindex = index + 1;
               newInstructionStages[index] =
                 currentState.instructionStages[index] || 0;
+              newStuckCell = [index, currentState.currentCycle+1];
             } else {
               if (
                 Stall(i2, i1) &&
@@ -107,14 +115,16 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
                 blockindex = index + 1;
                 newInstructionStages[index] =
                   currentState.instructionStages[index] || 0;
+                newStuckCell = [index, currentState.currentCycle+1];
               } else {
                 if (index == blockindex) {
-                  blockindex = index + 1;
+                  blockindex = index + 1; 
                 } else {
                   newInstructionStages[index] =
                     (currentState.instructionStages[index] ?? -1) + 1;
                   activeInstructions++;
                 }
+                newStuckCell = null;
               }
             }
           } else {
@@ -145,6 +155,7 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
             ) {
               //enviar datos
               console.log("tenemos un FW en Mem");
+              newStuckCell = [index, currentState.currentCycle];
             }
           }
           if (
@@ -153,11 +164,15 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
               currentState.stageCount &&
             !currentState.instructionFinished[index - 1]
           ) {
-            console.log("posible");
+            //console.log("posible");
             if (!canForward(i2, i1)[1]) {
               //enviar datos
+              console.log(i1, i2)
               console.log("FW en ex");
+              newStuckCell = [index+1, currentState.currentCycle+1];
+              newForwardOrigin = [index - 1, currentState.currentCycle+1]
             } else {
+              //FIX: arreglar bug de stall
               console.log("es load");
               activeInstructions++;
               nextCycle--;
@@ -221,6 +236,8 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
     instructionStages: newInstructionStages,
     isRunning: isRunning,
     isFinished: isFinished,
+    stuckCell: newStuckCell,
+    forwardOrigin: newForwardOrigin
   };
 };
 
@@ -286,6 +303,7 @@ export function SimulationProvider({ children }: PropsWithChildren) {
       });
 
       setSimulationState({
+        stuckCell: null,
         instructions: submittedInstructions,
         currentCycle: 1, // Start from cycle 1
         maxCycles: calculatedMaxCycles,
@@ -294,6 +312,8 @@ export function SimulationProvider({ children }: PropsWithChildren) {
         instructionStages: initialStages, // Set initial stages for cycle 1
         isFinished: false,
         instructionFinished: initialFinishedStages,
+        forwardOrigin: null,
+        isStall: false
       });
       // runClock will be triggered by the useEffect below when isRunning becomes true
     },

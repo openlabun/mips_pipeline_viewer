@@ -94,7 +94,7 @@ export function InstructionInput({ onInstructionsSubmit, onReset, isRunning }: I
         <div className="flex justify-between items-center gap-2">
            {/* Start Button: Disabled if started and not finished */}
           <Button onClick={handleSubmit} disabled={disableInputAndStart} className="flex-1">
-             {isFinished ? 'Finished' : hasStarted ? 'Running...' : 'Start Simulation'}
+             {isFinished ? 'Restart Simulation' : hasStarted ? 'Running...' : 'Start Simulation'}
           </Button>
 
           {/* Conditional Play/Pause Button: Show only when pause/resume is possible */}

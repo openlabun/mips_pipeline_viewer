@@ -33,7 +33,10 @@ export function PipelineVisualization() {
     isRunning,
     instructionStages, // Use the pre-calculated stages
     isFinished, // Use the finished flag from context
-    instructionFinished
+    instructionFinished,
+    stuckCell,
+    forwardOrigin,
+    isStall
   } = useSimulationState();
 
 
@@ -91,7 +94,8 @@ export function PipelineVisualization() {
                      const isFinishedInst = instructionFinished[instIndex]; // check if the current instruction is finished or not
                      const isPastStage = (c - (instIndex + 1)) < (currentStageIndex === null ? (isFinishedInst ? Infinity : -1) : currentStageIndex) && currentStageData;
 
-              
+                     const isStuckCell = stuckCell ? (stuckCell[0] === instIndex && stuckCell[1] === c) : false
+                     const isForwardOrigin = forwardOrigin ? (forwardOrigin[0] === instIndex && forwardOrigin[1] === c) : false
 
                     return (
                       <TableCell
@@ -100,6 +104,8 @@ export function PipelineVisualization() {
                           'text-center w-16 h-14 transition-colors duration-300',
                           // 1. If simulation is completed, reset all cells to default background
                           isFinished ? 'bg-background' :
+                          isForwardOrigin ? 'bg-amber-500 text-accent-foreground' :
+                          isStuckCell ? 'bg-indigo-500 text-accent-foreground' :
                           // 2. If it's the current stage and running, animate
                           shouldAnimate ? 'bg-accent text-accent-foreground animate-pulse-bg' :
                           // 3. If it's the current stage but paused/stopped, highlight statically
