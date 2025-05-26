@@ -1,226 +1,530 @@
 // src/context/SimulationContext.tsx
-"use client"; // Add 'use client' directive
+"use client";
 
-import type { PropsWithChildren } from 'react';
-import * as React from 'react';
+import React, { createContext, useContext, useState, useRef, useCallback, ReactNode } from "react";
 
-// Define the stage names (optional, but good for clarity)
-const STAGE_NAMES = ['IF', 'ID', 'EX', 'MEM', 'WB'] as const;
-type StageName = typeof STAGE_NAMES[number];
+export type SimulationMode = "stall" | "forward";
 
-// Define the shape of the context state
+export interface MipsInstruction {
+  hex: string;
+  mnemonic: string;
+  type: "R" | "I" | "J" | "unknown";
+  rs: number;
+  rt: number;
+  rd: number;
+  shamt: number;
+  funct: number;
+  immediate: number;
+  address: number;
+}
+
+export interface PipelineCell {
+  stage: string | null;
+  type: "normal" | "stall" | "forwardA" | "forwardB" | "load-use" | null;
+  info?: string;
+  cycle: number;
+}
+
+const STAGE_NAMES = ["IF", "ID", "EX", "MEM", "WB"];
+
 interface SimulationState {
   instructions: string[];
+  parsedInstructions: MipsInstruction[];
   currentCycle: number;
   maxCycles: number;
   isRunning: boolean;
   stageCount: number;
-  // Map instruction index to its current stage index (0-based) or null if not started/finished
-  instructionStages: Record<number, number | null>;
-  isFinished: boolean; // Track if simulation completed
+  isFinished: boolean;
+  mode: SimulationMode;
+  pipelineMatrix: PipelineCell[][];
 }
-
-// Define the shape of the context actions
-interface SimulationActions {
-  startSimulation: (submittedInstructions: string[]) => void;
-  resetSimulation: () => void;
-  pauseSimulation: () => void;
-  resumeSimulation: () => void;
-}
-
-// Create the contexts
-const SimulationStateContext = React.createContext<SimulationState | undefined>(undefined);
-const SimulationActionsContext = React.createContext<SimulationActions | undefined>(undefined);
-
-const DEFAULT_STAGE_COUNT = STAGE_NAMES.length; // Use length of defined stages
 
 const initialState: SimulationState = {
   instructions: [],
+  parsedInstructions: [],
   currentCycle: 0,
   maxCycles: 0,
   isRunning: false,
-  stageCount: DEFAULT_STAGE_COUNT,
-  instructionStages: {},
+  stageCount: STAGE_NAMES.length,
   isFinished: false,
+  mode: "stall",
+  pipelineMatrix: [],
 };
 
-// Function to calculate the next state based on the current state
-const calculateNextState = (currentState: SimulationState): SimulationState => {
-  if (!currentState.isRunning || currentState.isFinished) {
-    return currentState; // No changes if not running or already finished
+// --- PARSER DE INSTRUCCIONES MIPS ---
+function parseHexInstruction(hex: string): MipsInstruction {
+  const value = parseInt(hex, 16) >>> 0;
+  const opcode = (value >>> 26) & 0x3f;
+  const rs = (value >>> 21) & 0x1f;
+  const rt = (value >>> 16) & 0x1f;
+  const rd = (value >>> 11) & 0x1f;
+  const shamt = (value >>> 6) & 0x1f;
+  const funct = value & 0x3f;
+  const immediate = value & 0xffff;
+  const address = value & 0x3ffffff;
+
+  const R_FUNCTS: Record<number, string> = {
+    0x20: "add",
+    0x22: "sub",
+    0x24: "and",
+    0x25: "or",
+    0x2a: "slt",
+  };
+
+  const I_OPCODES: Record<number, string> = {
+    0x23: "lw",
+    0x2b: "sw",
+    0x08: "addi",
+    0x04: "beq",
+    0x05: "bne",
+  };
+
+  const J_OPCODES: Record<number, string> = {
+    0x02: "j",
+  };
+
+  let mnemonic = "unknown";
+  let type: "R" | "I" | "J" | "unknown" = "unknown";
+
+  if (opcode === 0x00 && R_FUNCTS[funct]) {
+    mnemonic = R_FUNCTS[funct];
+    type = "R";
+  } else if (I_OPCODES[opcode]) {
+    mnemonic = I_OPCODES[opcode];
+    type = "I";
+  } else if (J_OPCODES[opcode]) {
+    mnemonic = J_OPCODES[opcode];
+    type = "J";
   }
 
-  const nextCycle = currentState.currentCycle + 1;
-  const newInstructionStages: Record<number, number | null> = {};
-  let activeInstructions = 0;
-
-  currentState.instructions.forEach((_, index) => {
-    // Calculate the stage index for the instruction in the next cycle
-    // Instruction `index` enters stage `s` (0-based) at cycle `index + s + 1`
-    // So, in cycle `c`, the stage is `c - index - 1`
-    const stageIndex = nextCycle - index - 1;
-
-    if (stageIndex >= 0 && stageIndex < currentState.stageCount) {
-      newInstructionStages[index] = stageIndex;
-      activeInstructions++; // Count instructions currently in the pipeline
-    } else {
-      newInstructionStages[index] = null; // Not in pipeline (either hasn't started or has finished)
-    }
-  });
-
-  // The simulation completes *after* the last instruction finishes the last stage
-  const completionCycle = currentState.instructions.length > 0
-    ? currentState.instructions.length + currentState.stageCount - 1
-    : 0;
-
-  const isFinished = nextCycle > completionCycle;
-  const isRunning = !isFinished; // Stop running when finished
-
   return {
-    ...currentState,
-    currentCycle: isFinished ? completionCycle : nextCycle, // Cap cycle at completion
-    instructionStages: newInstructionStages,
-    isRunning: isRunning,
-    isFinished: isFinished,
+    hex,
+    mnemonic,
+    type,
+    rs,
+    rt,
+    rd,
+    shamt,
+    funct,
+    immediate,
+    address,
   };
-};
+}
 
+// Función para determinar si una instrucción escribe en un registro
+function getRegWrite(instruction: MipsInstruction): boolean {
+  if (instruction.type === "R") {
+    return true; // Todas las instrucciones R escriben en rd
+  } else if (instruction.type === "I") {
+    // Solo lw y addi escriben en rt
+    return ["lw", "addi"].includes(instruction.mnemonic);
+  }
+  return false;
+}
 
-// Create the provider component
-export function SimulationProvider({ children }: PropsWithChildren) {
-  const [simulationState, setSimulationState] = React.useState<SimulationState>(initialState);
-  const intervalRef = React.useRef<NodeJS.Timeout | null>(null);
+// Función para obtener el registro destino de una instrucción
+function getReg(instruction: MipsInstruction, regType: 'rs' | 'rt' | 'rd'): number {
+  return instruction[regType];
+}
+
+// --- GENERA LA MATRIZ DEL PIPELINE CON HAZARDS Y FORWARDING POR CELDA ---
+function buildPipelineMatrix(
+  instructions: MipsInstruction[],
+  mode: SimulationMode
+): PipelineCell[][] {
+  const n = instructions.length;
+  const pipeline: PipelineCell[][] = [];
+  const startCycles: number[] = [];
+  let currStart = 1;
+
+  // Primero calculamos los ciclos de inicio considerando stalls
+  for (let i = 0; i < n; i++) {
+    startCycles[i] = currStart ;
+  
+    // Verificamos si hay hazards que requieran stalls
+    if (i > 0) {
+      const prev = instructions[i - 1];
+      const curr = instructions[i];
+    
+      // Registros fuente de la instrucción actual
+      const currSrcs = [curr.rs, curr.rt].filter(r => r !== 0);
+    
+      // Registro destino de la instrucción anterior
+      const prevDest = prev.type === "R" ? prev.rd : 
+                      (prev.type === "I" && prev.mnemonic === "lw") ? prev.rt : 0;
+    
+      // Load-use hazard siempre requiere stall
+      if (prev.mnemonic === "lw" && prevDest !== 0 && currSrcs.includes(prevDest)) {
+        startCycles[i] += 1; // Añadir un ciclo de stall
+      }
+      // En modo stall, cualquier RAW hazard requiere stall
+      else if (mode === "stall" && prevDest !== 0 && currSrcs.includes(prevDest)) {
+        startCycles[i] += 1; // Añadir un ciclo de stall
+      }
+    }
+  
+    currStart = startCycles[i] + 1;
+  }
+
+  // Calculamos el total de ciclos
+  let totalCycles = startCycles[n - 1] + STAGE_NAMES.length - 1;
+  
+  // Construimos la matriz del pipeline
+  for (let i = 0; i < n; i++) {
+    const row: PipelineCell[] = [];
+    let currentStage = 0; // Comenzamos en la etapa IF
+    
+  
+    for (let cycle = 0; cycle <= totalCycles; cycle++) {
+      // Si aún no ha comenzado esta instrucción
+      if (cycle < startCycles[i]) {
+        row.push({ stage: null, type: null, cycle });
+        continue;
+      }
+    
+      // Si ya terminó esta instrucción
+      if (currentStage >= STAGE_NAMES.length) {
+        row.push({ stage: null, type: null, cycle });
+        continue;
+      }
+    
+      // Inicializa esto antes del bucle principal de ciclos (una sola vez)
+const extraDelays = new Array(instructions.length).fill(0);
+
+// Dentro del bucle que genera las etapas por ciclo e instrucción:
+if (currentStage === 1) { // Estamos en ID
+  const prev = i > 0 ? instructions[i - 1] : null;
+
+  if (prev) {
+    const prevDest = prev.type === "R" ? prev.rd :
+                    (prev.type === "I" && prev.mnemonic === "lw") ? prev.rt : 0;
+
+    const currSrcs = [instructions[i].rs, instructions[i].rt].filter(r => r !== 0);
+
+    const expectedCycle = startCycles[i] + currentStage + extraDelays[i];
+
+    // Load-use hazard
+    if (prev.mnemonic === "lw" && prevDest !== 0 && currSrcs.includes(prevDest) &&
+        cycle === expectedCycle) {
+
+      row.push({
+        stage: "Stall",
+        type: "load-use",
+        info: `Load-use hazard: r${prevDest}`,
+        cycle
+      });
+
+      // Aumenta el delay de todas las instrucciones siguientes
+      for (let j = i + 1; j < instructions.length; j++) {
+        extraDelays[j] += 1;
+      }
+      totalCycles += 1; // Aumenta el total de ciclos por el stall
+      continue; // No avanzamos al siguiente stage
+    }
+
+    // RAW hazard en modo stall
+    else if (mode === "stall"  && prevDest !== 0 && currSrcs.includes(prevDest) &&
+            cycle === expectedCycle) {
+
+      row.push({
+        stage: "Stall",
+        type: "stall",
+        info: `RAW hazard: r${prevDest}`,
+        cycle
+      });
+
+      // Aumenta el delay de todas las instrucciones siguientes
+      for (let j = i + 1; j < instructions.length; j++) {
+        extraDelays[j] += 1;
+      }
+      totalCycles += 1; // Aumenta el total de ciclos por el stall
+      continue; // No avanzamos al siguiente stage
+    }
+    else if (mode === "forward" && prevDest !== 0 && currSrcs.includes(prevDest) &&
+            cycle === expectedCycle) {
+
+      row.push({
+        stage: "Stall",
+        type: "stall",
+        info: `RAW hazard: r${prevDest}`,
+        cycle
+      });
+
+      // Aumenta el delay de todas las instrucciones siguientes
+      for (let j = i + 1; j < instructions.length; j++) {
+        extraDelays[j] += 1;
+      }
+
+      continue; // No avanzamos al siguiente stage
+    }
+  }
+}
+
+    
+      // Verificamos forwarding en EX usando el algoritmo proporcionado
+      let forwardA: string | null = null;
+      let forwardB: string | null = null;
+    
+      if (mode === "forward" && currentStage === 2) { // Estamos en EX
+        const idEx = instructions[i]; // Instrucción actual en EX
+      
+        // Instrucción en EX/MEM (una instrucción atrás)
+        const exMem = i > 0 ? instructions[i - 1] : null;
+      
+        // Instrucción en MEM/WB (dos instrucciones atrás)
+        const memWb = i > 1 ? instructions[i - 2] : null;
+      
+        // EX Hazard - Forwarding desde EX/MEM
+        if (
+          exMem && 
+          getRegWrite(exMem) && 
+          (exMem.type === "R" ? exMem.rd : exMem.rt) !== 0 && 
+          (
+            (exMem.type === "R" ? exMem.rd : exMem.rt) === idEx.rs || 
+            (exMem.type === "R" ? exMem.rd : exMem.rt) === idEx.rt
+          )
+        ) {
+          const destReg = exMem.type === "R" ? exMem.rd : exMem.rt;
+        
+          // ForwardA: cuando el registro rs coincide con el destino en EX/MEM
+          if (destReg === idEx.rs) {
+            forwardA = `ForwardA (EX/MEM): r${destReg}`;
+          }
+        
+          // ForwardB: cuando el registro rt coincide con el destino en EX/MEM
+          if (destReg === idEx.rt && idEx.rt !== 0) {
+            forwardB = `ForwardB (EX/MEM): r${destReg}`;
+          }
+        }
+      
+        // MEM Hazard - Forwarding desde MEM/WB
+        if (
+          memWb && 
+          getRegWrite(memWb) && 
+          (memWb.type === "R" ? memWb.rd : memWb.rt) !== 0 && 
+          (
+            (
+              (!exMem || (exMem.type === "R" ? exMem.rd : exMem.rt) !== idEx.rs) && 
+              (memWb.type === "R" ? memWb.rd : memWb.rt) === idEx.rs
+            ) || 
+            (
+              (!exMem || (exMem.type === "R" ? exMem.rd : exMem.rt) !== idEx.rt) && 
+              (memWb.type === "R" ? memWb.rd : memWb.rt) === idEx.rt && 
+              idEx.rt !== 0
+            )
+          )
+        ) {
+          const destReg = memWb.type === "R" ? memWb.rd : memWb.rt;
+        
+          // ForwardA: cuando el registro rs coincide con el destino en MEM/WB
+          // y no hay ya un forwarding desde EX/MEM
+          if (!forwardA && destReg === idEx.rs) {
+            forwardA = `ForwardA (MEM/WB): r${destReg}`;
+          }
+        
+          // ForwardB: cuando el registro rt coincide con el destino en MEM/WB
+          // y no hay ya un forwarding desde EX/MEM
+          if (!forwardB && destReg === idEx.rt && idEx.rt !== 0) {
+            forwardB = `ForwardB (MEM/WB): r${destReg}`;
+          }
+        }
+      }
+    
+      // Determinamos el tipo de forwarding a mostrar (priorizamos ForwardA si hay ambos)
+      let forwardType: "forwardA" | "forwardB" | null = null;
+      let forwardInfo = "";
+    
+      if (forwardA) {
+        forwardType = "forwardA";
+        forwardInfo = forwardA;
+        if (forwardB) {
+          forwardInfo += `, ${forwardB}`;
+        }
+      } else if (forwardB) {
+        forwardType = "forwardB";
+        forwardInfo = forwardB;
+      }
+    
+      // Añadimos la celda normal o con forwarding
+      row.push({
+        stage: STAGE_NAMES[currentStage],
+        type: forwardType || "normal",
+        info: forwardInfo,
+        cycle
+      });
+    
+      currentStage++; // Avanzamos al siguiente stage
+    }
+  
+    pipeline.push(row);
+  }
+
+  return pipeline;
+}
+
+const SimulationContext = createContext<any>(null);
+
+export function SimulationProvider({ children }: { children: ReactNode }) {
+  const [simulationState, setSimulationState] = useState<SimulationState>(initialState);
+  const timerRef = useRef<NodeJS.Timeout | null>(null);
 
   const clearTimer = () => {
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
     }
   };
 
-  const runClock = React.useCallback(() => {
-    clearTimer(); // Clear any existing timer
-    if (!simulationState.isRunning || simulationState.isFinished) return; // Don't start timer if not running or finished
+  const setMode = (mode: SimulationMode) => {
+    setSimulationState((prev) => ({
+      ...prev,
+      mode,
+    }));
+  };
 
-    intervalRef.current = setInterval(() => {
-      setSimulationState((prevState) => {
-        const nextState = calculateNextState(prevState);
-        // Check if the simulation just finished in this step
-        if (nextState.isFinished && !prevState.isFinished) {
-           clearTimer(); // Stop the clock immediately
-        }
-        return nextState;
-      });
-    }, 1000); // Advance cycle every 1 second
-  }, [simulationState.isRunning, simulationState.isFinished]); // Dependencies
+  const setInstructions = (instructions: string[]) => {
+    setSimulationState((prev) => ({
+      ...prev,
+      instructions,
+    }));
+  };
 
-
-  const resetSimulation = React.useCallback(() => {
+  const resetSimulation = useCallback(() => {
     clearTimer();
     setSimulationState(initialState);
   }, []);
 
-  const startSimulation = React.useCallback((submittedInstructions: string[]) => {
-    clearTimer(); // Clear previous timer just in case
-    if (submittedInstructions.length === 0) {
-      resetSimulation(); // Reset if no instructions submitted
-      return;
-    }
-
-    const calculatedMaxCycles = submittedInstructions.length + DEFAULT_STAGE_COUNT - 1;
-    const initialStages: Record<number, number | null> = {};
-    // Initialize stages for cycle 1
-    submittedInstructions.forEach((_, index) => {
-        const stageIndex = 1 - index - 1; // Calculate stage for cycle 1
-        if (stageIndex >= 0 && stageIndex < DEFAULT_STAGE_COUNT) {
-            initialStages[index] = stageIndex;
-        } else {
-            initialStages[index] = null;
-        }
-    });
-
-
-    setSimulationState({
-      instructions: submittedInstructions,
-      currentCycle: 1, // Start from cycle 1
-      maxCycles: calculatedMaxCycles,
-      isRunning: true,
-      stageCount: DEFAULT_STAGE_COUNT,
-      instructionStages: initialStages, // Set initial stages for cycle 1
-      isFinished: false,
-    });
-    // runClock will be triggered by the useEffect below when isRunning becomes true
-  }, [resetSimulation]);
-
-   const pauseSimulation = () => {
-     setSimulationState((prevState) => {
-       if (prevState.isRunning) {
-         clearTimer();
-         return { ...prevState, isRunning: false };
-       }
-       return prevState; // No change if already paused
-     });
-   };
-
-  const resumeSimulation = () => {
-     setSimulationState((prevState) => {
-        // Resume only if paused, started, and not finished
-        if (!prevState.isRunning && prevState.currentCycle > 0 && !prevState.isFinished) {
-            return { ...prevState, isRunning: true };
-        }
-        return prevState; // No change if running, not started, or finished
-     });
-     // runClock will be triggered by useEffect
-   };
-
-
-  // Effect to manage the interval timer based on isRunning state
-  React.useEffect(() => {
-    if (simulationState.isRunning && !simulationState.isFinished) {
-      runClock();
-    } else {
+  const startSimulation = useCallback(
+    (submittedInstructions: string[]) => {
       clearTimer();
-    }
-    // Cleanup timer on unmount or when isRunning/isFinished changes
-    return clearTimer;
-  }, [simulationState.isRunning, simulationState.isFinished, runClock]);
-
-
-  // State value derived directly from simulationState
-  const stateValue: SimulationState = simulationState;
-
-  const actionsValue: SimulationActions = React.useMemo(
-    () => ({
-      startSimulation,
-      resetSimulation,
-      pauseSimulation,
-      resumeSimulation,
-    }),
-    [startSimulation, resetSimulation] // pause/resume don't change
+      if (submittedInstructions.length === 0) {
+        resetSimulation();
+        return;
+      }
+      try {
+        const parsedInstructions = submittedInstructions.map(parseHexInstruction);
+        const pipelineMatrix = buildPipelineMatrix(parsedInstructions, simulationState.mode);
+        // El número de ciclos es el máximo ciclo de cualquier celda con stage no null
+        let maxCycles = 0;
+        pipelineMatrix.forEach(row => {
+          row.forEach(cell => {
+            if (cell.stage && cell.cycle > maxCycles) maxCycles = cell.cycle;
+          });
+        });
+        setSimulationState({
+          instructions: submittedInstructions,
+          parsedInstructions,
+          currentCycle: 1,
+          maxCycles,
+          isRunning: true,
+          stageCount: STAGE_NAMES.length,
+          isFinished: false,
+          mode: simulationState.mode,
+          pipelineMatrix,
+        });
+      } catch (error) {
+        console.error("Error starting simulation:", error);
+        resetSimulation();
+      }
+    },
+    [resetSimulation, simulationState.mode]
   );
 
+  const nextCycle = useCallback(() => {
+    setSimulationState((prev) => {
+      if (prev.isFinished || !prev.isRunning) return prev;
+      const nextCycle = prev.currentCycle + 1;
+      if (nextCycle > prev.maxCycles) {
+        clearTimer();
+        return { ...prev, isFinished: true, isRunning: false };
+      }
+      return { ...prev, currentCycle: nextCycle };
+    });
+  }, []);
+
+  const prevCycle = useCallback(() => {
+    setSimulationState((prev) => {
+      if (prev.currentCycle <= 1) return prev;
+      return { ...prev, currentCycle: prev.currentCycle - 1 };
+    });
+  }, []);
+
+  const pauseSimulation = useCallback(() => {
+    clearTimer();
+    setSimulationState((prev) => ({
+      ...prev,
+      isRunning: false,
+    }));
+  }, []);
+
+  const resumeSimulation = useCallback(() => {
+    setSimulationState((prev) => ({
+      ...prev,
+      isRunning: true,
+    }));
+  }, []);
+
+  // Auto-advance simulation if running
+  React.useEffect(() => {
+    if (simulationState.isRunning && !simulationState.isFinished) {
+      timerRef.current = setTimeout(() => {
+        nextCycle();
+      }, 1000);
+    }
+    return () => clearTimer();
+    // eslint-disable-next-line
+  }, [simulationState.isRunning, simulationState.currentCycle, simulationState.isFinished]);
+
+  const value = {
+    ...simulationState,
+    setMode,
+    startSimulation,
+    nextCycle,
+    prevCycle,
+    pauseSimulation,
+    resumeSimulation,
+    resetSimulation,
+    setInstructions,
+  };
+
   return (
-    <SimulationStateContext.Provider value={stateValue}>
-      <SimulationActionsContext.Provider value={actionsValue}>
-        {children}
-      </SimulationActionsContext.Provider>
-    </SimulationStateContext.Provider>
+    <SimulationContext.Provider value={value}>
+      {children}
+    </SimulationContext.Provider>
   );
 }
 
-// Custom hooks for easy context consumption
 export function useSimulationState() {
-  const context = React.useContext(SimulationStateContext);
-  if (context === undefined) {
-    throw new Error('useSimulationState must be used within a SimulationProvider');
+  const context = useContext(SimulationContext);
+  if (!context) {
+    throw new Error("useSimulationState must be used within a SimulationProvider");
   }
   return context;
 }
 
 export function useSimulationActions() {
-  const context = React.useContext(SimulationActionsContext);
-  if (context === undefined) {
-    throw new Error('useSimulationActions must be used within a SimulationProvider');
+  const context = useContext(SimulationContext);
+  if (!context) {
+    throw new Error("useSimulationActions must be used within a SimulationProvider");
   }
-  return context;
+  const {
+    setMode,
+    startSimulation,
+    nextCycle,
+    prevCycle,
+    pauseSimulation,
+    resumeSimulation,
+    resetSimulation,
+    setInstructions,
+  } = context;
+  return {
+    setMode,
+    startSimulation,
+    nextCycle,
+    prevCycle,
+    pauseSimulation,
+    resumeSimulation,
+    resetSimulation,
+    setInstructions,
+  };
 }
