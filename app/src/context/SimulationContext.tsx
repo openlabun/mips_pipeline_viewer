@@ -135,7 +135,7 @@ function buildPipelineMatrix(
   const n = instructions.length;
   const pipeline: PipelineCell[][] = [];
   const startCycles: number[] = [];
-  let currStart = 1;
+  let currStart = 0;
 
   // Primero calculamos los ciclos de inicio considerando stalls
   for (let i = 0; i < n; i++) {
