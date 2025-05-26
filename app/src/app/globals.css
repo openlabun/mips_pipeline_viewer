@@ -8,30 +8,34 @@ body {
 
 @layer base {
   :root {
-    --background: 0 0% 96.1%; /* #F5F5F5 Neutral gray */
-    --foreground: 0 0% 20%; /* #333 Dark gray */
-    --card: 0 0% 100%; /* White */
-    --card-foreground: 0 0% 20%; /* #333 Dark gray */
-    --popover: 0 0% 100%; /* White */
-    --popover-foreground: 0 0% 20%; /* #333 Dark gray */
-    --primary: 0 0% 20%; /* #333 Dark gray */
-    --primary-foreground: 0 0% 98%; /* Near white */
-    --secondary: 0 0% 90%; /* Lighter gray */
-    --secondary-foreground: 0 0% 20%; /* #333 Dark gray */
-    --muted: 0 0% 90%; /* Lighter gray */
-    --muted-foreground: 0 0% 45.1%; /* Medium gray */
-    --accent: 217 89% 61%; /* #4285F4 Blue */
-    --accent-foreground: 0 0% 98%; /* Near white */
+    --stall: 0 84.2% 60.2%;
+    --stall-foreground: 0 0% 98%;
+    --forwarding: 45 93% 47%;
+    --forwarding-foreground: 0 0% 20%;
+    --background: 0 0% 96.1%;
+    --foreground: 0 0% 20%;
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 20%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 20%;
+    --primary: 0 0% 20%;
+    --primary-foreground: 0 0% 98%;
+    --secondary: 0 0% 90%;
+    --secondary-foreground: 0 0% 20%;
+    --muted: 0 0% 90%;
+    --muted-foreground: 0 0% 45.1%;
+    --accent: 217 89% 61%;
+    --accent-foreground: 0 0% 98%;
     --destructive: 0 84.2% 60.2%;
     --destructive-foreground: 0 0% 98%;
-    --border: 0 0% 80%; /* Slightly darker gray for borders */
-    --input: 0 0% 85%; /* Gray for input */
-    --ring: 217 89% 61%; /* #4285F4 Blue for focus rings */
-    --chart-1: 217 89% 61%; /* Blue */
-    --chart-2: 217 70% 50%; /* Darker Blue */
-    --chart-3: 0 0% 45%; /* Medium gray */
-    --chart-4: 0 0% 65%; /* Lighter gray */
-    --chart-5: 0 0% 85%; /* Very light gray */
+    --border: 0 0% 80%;
+    --input: 0 0% 85%;
+    --ring: 217 89% 61%;
+    --chart-1: 217 89% 61%;
+    --chart-2: 217 70% 50%;
+    --chart-3: 0 0% 45%;
+    --chart-4: 0 0% 65%;
+    --chart-5: 0 0% 85%;
     --radius: 0.5rem;
     --sidebar-background: 0 0% 98%;
     --sidebar-foreground: 0 0% 20%;
@@ -43,8 +47,10 @@ body {
     --sidebar-ring: 217 89% 61%;
   }
   .dark {
-    /* Keeping dark mode defaults, but ideally these should also be updated */
-    /* For this request, we'll focus on the light mode theme */
+    --stall: 0 62.8% 30.6%;
+    --stall-foreground: 0 0% 98%;
+    --forwarding: 45 93% 47%;
+    --forwarding-foreground: 0 0% 9%;
     --background: 0 0% 3.9%;
     --foreground: 0 0% 98%;
     --card: 0 0% 3.9%;
@@ -57,13 +63,13 @@ body {
     --secondary-foreground: 0 0% 98%;
     --muted: 0 0% 14.9%;
     --muted-foreground: 0 0% 63.9%;
-    --accent: 217 89% 61%; /* Blue Accent */
-    --accent-foreground: 0 0% 98%; /* White */
+    --accent: 217 89% 61%;
+    --accent-foreground: 0 0% 98%;
     --destructive: 0 62.8% 30.6%;
     --destructive-foreground: 0 0% 98%;
     --border: 0 0% 14.9%;
     --input: 0 0% 14.9%;
-    --ring: 217 89% 61%; /* Blue Ring */
+    --ring: 217 89% 61%;
     --chart-1: 217 89% 61%;
     --chart-2: 217 70% 50%;
     --chart-3: 0 0% 63.9%;

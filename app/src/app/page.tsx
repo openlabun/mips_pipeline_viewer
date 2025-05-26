@@ -1,19 +1,16 @@
-// src/app/page.tsx
-
 "use client";
 
 import type * as React from 'react';
 import { InstructionInput } from '@/components/instruction-input';
 import { PipelineVisualization } from '@/components/pipeline-visualization';
 import { Separator } from '@/components/ui/separator';
-import { useSimulationState, useSimulationActions } from '@/context/SimulationContext'; // Import context hooks
+import { useSimulationState, useSimulationActions } from '@/context/SimulationContext';
+import { OptionsControls } from '@/components/options-controls';
 
 export default function Home() {
-  // Get state and actions from context
   const { instructions, isRunning, currentCycle, maxCycles, isFinished } = useSimulationState();
   const { startSimulation, resetSimulation } = useSimulationActions();
 
-  // Simulation has started if cycle > 0
   const hasStarted = currentCycle > 0;
 
   return (
@@ -25,40 +22,36 @@ export default function Home() {
         </p>
       </header>
 
-      {/* Pass context actions/state down */}
       <InstructionInput
         onInstructionsSubmit={startSimulation}
         onReset={resetSimulation}
-        isRunning={isRunning} // isRunning is needed for button state/icons
+        isRunning={isRunning}
       />
+
+      <OptionsControls />
 
       <Separator className="my-4" />
 
-      {/* Conditionally render visualization and cycle info only if instructions exist */}
       {instructions.length > 0 && (
         <>
           <PipelineVisualization />
-          {/* Display cycle info below the visualization */}
-           {/* Ensure maxCycles is valid before displaying */}
-           { maxCycles > 0 && (
-              <p className="text-center text-muted-foreground mt-4">
-                Cycle: {currentCycle} / {maxCycles} {isFinished ? '(Finished)' : isRunning ? '(Running)' : '(Paused)'}
-              </p>
-            )}
+          {maxCycles > 0 && (
+            <p className="text-center text-muted-foreground mt-4">
+              Cycle: {currentCycle} / {maxCycles} {isFinished ? '(Finished)' : isRunning ? '(Running)' : '(Paused)'}
+            </p>
+          )}
         </>
       )}
-       {/* Show message if reset/never run and no instructions */}
-       {!hasStarted && instructions.length === 0 && (
+      {!hasStarted && instructions.length === 0 && (
         <p className="text-center text-muted-foreground mt-4">
           Enter instructions and press Start Simulation.
         </p>
-       )}
-       {/* Show different message if reset after a run */}
-       {hasStarted && instructions.length === 0 && (
-         <p className="text-center text-muted-foreground mt-4">
-           Simulation reset. Enter new instructions to start again.
-         </p>
-       )}
+      )}
+      {hasStarted && instructions.length === 0 && (
+        <p className="text-center text-muted-foreground mt-4">
+          Simulation reset. Enter new instructions to start again.
+        </p>
+      )}
     </div>
   );
 }
