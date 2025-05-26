@@ -7,38 +7,39 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { useSimulationActions, useSimulationState } from '@/context/SimulationContext'; // Import context hooks
+import { useSimulationActions, useSimulationState } from '@/context/SimulationContext';
 import { Play, Pause, RotateCcw } from 'lucide-react';
 
-interface InstructionInputProps {
-  onInstructionsSubmit: (instructions: string[]) => void;
-  onReset: () => void;
-  isRunning: boolean; // Keep isRunning prop for button state logic
-}
+const HEX_REGEX = /^[0-9a-fA-F]{8}$/;
 
-const HEX_REGEX = /^[0-9a-fA-F]{8}$/; // Basic check for 8 hex characters
-
-export function InstructionInput({ onInstructionsSubmit, onReset, isRunning }: InstructionInputProps) {
+export function InstructionInput() {
   const [inputText, setInputText] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
-  const { pauseSimulation, resumeSimulation } = useSimulationActions();
-  const { currentCycle, isFinished, instructions } = useSimulationState(); // Get state from context
+  const [useStalls, setUseStalls] = useState(false);
+  const [useForwarding, setUseForwarding] = useState(false); 
 
-  // Reset input text when instructions are cleared (e.g., on reset)
+
+  const {
+    pauseSimulation,
+    resumeSimulation,
+    resetSimulation,
+    startSimulation,
+    startSimulationWithStalls,
+    startSimulationWithForwarding,
+  } = useSimulationActions();
+
+  const { currentCycle, isFinished, instructions, isRunning } = useSimulationState();
+
   useEffect(() => {
     if (instructions.length === 0) {
       setInputText('');
-      setError(null); // Clear errors on reset as well
+      setError(null);
     }
   }, [instructions]);
 
-
   const hasStarted = currentCycle > 0;
-  // Can only pause/resume if started and not finished
   const canPauseResume = hasStarted && !isFinished;
-  // Input/Start button should be disabled if simulation has started and isn't finished
   const disableInputAndStart = hasStarted && !isFinished;
-
 
   const handleSubmit = () => {
     setError(null);
@@ -58,7 +59,14 @@ export function InstructionInput({ onInstructionsSubmit, onReset, isRunning }: I
       return;
     }
 
-    onInstructionsSubmit(currentInstructions);
+    if (useForwarding) {
+      startSimulationWithForwarding(currentInstructions);
+    } else if (useStalls) {
+      startSimulationWithStalls(currentInstructions);
+    } else {
+      startSimulation(currentInstructions);
+    }
+
   };
 
   const handlePauseResume = () => {
@@ -68,7 +76,6 @@ export function InstructionInput({ onInstructionsSubmit, onReset, isRunning }: I
       resumeSimulation();
     }
   };
-
 
   return (
     <Card className="w-full max-w-md">
@@ -80,36 +87,67 @@ export function InstructionInput({ onInstructionsSubmit, onReset, isRunning }: I
           <Label htmlFor="instructions">Enter Hex Instructions (one per line)</Label>
           <Textarea
             id="instructions"
-            placeholder="e.g., 00a63820..." // Removed 0x prefix for consistency with regex
+            placeholder="e.g., 00a63820..."
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
             rows={5}
             className="font-mono"
-            // Disable input field if simulation has started and not yet finished
             disabled={disableInputAndStart}
             aria-label="MIPS Hex Instructions Input"
           />
           {error && <p className="text-sm text-destructive">{error}</p>}
         </div>
+
+        <div className="flex items-center space-x-2">
+          <input
+            type="checkbox"
+            id="useStalls"
+            checked={useStalls}
+            onChange={(e) => {
+              setUseStalls(e.target.checked);
+              if (e.target.checked) setUseForwarding(false);
+              }}
+            disabled={disableInputAndStart}
+          />
+          <Label htmlFor="useStalls" className="text-sm">
+            Activar detección de hazards (agregar stalls)
+          </Label>
+        </div>
+        <div className="flex items-center space-x-2">
+          <div className="flex items-center space-x-2">
+            <input
+              type="checkbox"
+              id="useForwarding"
+              checked={useForwarding}
+              onChange={(e) => {
+                setUseForwarding(e.target.checked);
+                if (e.target.checked) setUseStalls(false);
+              }}
+              disabled={disableInputAndStart}
+            />
+            <Label htmlFor="useForwarding" className="text-sm">
+              Activar Forwarding (con stalls en instrucciones Load)
+            </Label>
+          </div>
+        </div>
+
+
         <div className="flex justify-between items-center gap-2">
-           {/* Start Button: Disabled if started and not finished */}
           <Button onClick={handleSubmit} disabled={disableInputAndStart} className="flex-1">
-             {isFinished ? 'Finished' : hasStarted ? 'Running...' : 'Start Simulation'}
+            {isFinished ? 'Finished' : hasStarted ? 'Running...' : 'Start Simulation'}
           </Button>
 
-          {/* Conditional Play/Pause Button: Show only when pause/resume is possible */}
           {canPauseResume && (
-             <Button variant="outline" onClick={handlePauseResume} size="icon" aria-label={isRunning ? 'Pause Simulation' : 'Resume Simulation'}>
+            <Button variant="outline" onClick={handlePauseResume} size="icon" aria-label={isRunning ? 'Pause Simulation' : 'Resume Simulation'}>
               {isRunning ? <Pause /> : <Play />}
-             </Button>
+            </Button>
           )}
 
-          {/* Reset Button: Show only if the simulation has started */}
-           {hasStarted && (
-              <Button variant="destructive" onClick={onReset} size="icon" aria-label="Reset Simulation">
-                <RotateCcw />
-              </Button>
-           )}
+          {hasStarted && (
+            <Button variant="destructive" onClick={resetSimulation} size="icon" aria-label="Reset Simulation">
+              <RotateCcw />
+            </Button>
+          )}
         </div>
       </CardContent>
     </Card>

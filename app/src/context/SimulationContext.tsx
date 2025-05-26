@@ -3,6 +3,7 @@
 
 import type { PropsWithChildren } from 'react';
 import * as React from 'react';
+import { ForwardInfo, insertStallsForDataHazards, insertStallsForForwarding } from '@/lib/utils'; 
 
 // Define the stage names (optional, but good for clarity)
 const STAGE_NAMES = ['IF', 'ID', 'EX', 'MEM', 'WB'] as const;
@@ -18,6 +19,8 @@ interface SimulationState {
   // Map instruction index to its current stage index (0-based) or null if not started/finished
   instructionStages: Record<number, number | null>;
   isFinished: boolean; // Track if simulation completed
+  forwards: ForwardInfo[]; // Add forwards property
+  instructionsWithStalls?: string[];
 }
 
 // Define the shape of the context actions
@@ -26,6 +29,8 @@ interface SimulationActions {
   resetSimulation: () => void;
   pauseSimulation: () => void;
   resumeSimulation: () => void;
+  startSimulationWithStalls: (submittedInstructions: string[]) => void;
+  startSimulationWithForwarding: (submittedInstructions: string[]) => void;
 }
 
 // Create the contexts
@@ -42,6 +47,7 @@ const initialState: SimulationState = {
   stageCount: DEFAULT_STAGE_COUNT,
   instructionStages: {},
   isFinished: false,
+  forwards: [],
 };
 
 // Function to calculate the next state based on the current state
@@ -120,37 +126,35 @@ export function SimulationProvider({ children }: PropsWithChildren) {
     setSimulationState(initialState);
   }, []);
 
-  const startSimulation = React.useCallback((submittedInstructions: string[]) => {
-    clearTimer(); // Clear previous timer just in case
-    if (submittedInstructions.length === 0) {
-      resetSimulation(); // Reset if no instructions submitted
-      return;
+const startSimulation = React.useCallback((submittedInstructions: string[], forwards?: ForwardInfo[],instructionsWithStalls?: string[]) => {
+  clearTimer();
+  if (submittedInstructions.length === 0) {
+    resetSimulation();
+    return;
+  }
+  const calculatedMaxCycles = submittedInstructions.length + DEFAULT_STAGE_COUNT - 1;
+  const initialStages: Record<number, number | null> = {};
+  submittedInstructions.forEach((_, index) => {
+    const stageIndex = 1 - index - 1;
+    if (stageIndex >= 0 && stageIndex < DEFAULT_STAGE_COUNT) {
+      initialStages[index] = stageIndex;
+    } else {
+      initialStages[index] = null;
     }
+  });
 
-    const calculatedMaxCycles = submittedInstructions.length + DEFAULT_STAGE_COUNT - 1;
-    const initialStages: Record<number, number | null> = {};
-    // Initialize stages for cycle 1
-    submittedInstructions.forEach((_, index) => {
-        const stageIndex = 1 - index - 1; // Calculate stage for cycle 1
-        if (stageIndex >= 0 && stageIndex < DEFAULT_STAGE_COUNT) {
-            initialStages[index] = stageIndex;
-        } else {
-            initialStages[index] = null;
-        }
-    });
-
-
-    setSimulationState({
-      instructions: submittedInstructions,
-      currentCycle: 1, // Start from cycle 1
-      maxCycles: calculatedMaxCycles,
-      isRunning: true,
-      stageCount: DEFAULT_STAGE_COUNT,
-      instructionStages: initialStages, // Set initial stages for cycle 1
-      isFinished: false,
-    });
-    // runClock will be triggered by the useEffect below when isRunning becomes true
-  }, [resetSimulation]);
+  setSimulationState({
+    instructions: submittedInstructions,
+    currentCycle: 1,
+    maxCycles: calculatedMaxCycles,
+    isRunning: true,
+    stageCount: DEFAULT_STAGE_COUNT,
+    instructionStages: initialStages,
+    isFinished: false,
+    forwards: forwards ?? [],
+    instructionsWithStalls: instructionsWithStalls ?? [],
+  });
+}, [resetSimulation]);
 
    const pauseSimulation = () => {
      setSimulationState((prevState) => {
@@ -188,6 +192,16 @@ export function SimulationProvider({ children }: PropsWithChildren) {
 
   // State value derived directly from simulationState
   const stateValue: SimulationState = simulationState;
+  const startSimulationWithStalls = React.useCallback((submittedInstructions: string[]) => {
+  const withStalls = insertStallsForDataHazards(submittedInstructions);
+  startSimulation(withStalls); 
+  }, [startSimulation]);
+
+  const startSimulationWithForwarding = React.useCallback((submittedInstructions: string[]) => {
+  const { forwards, instructions } = insertStallsForForwarding(submittedInstructions);
+  const instructionsWithStalls = insertStallsForDataHazards(submittedInstructions);
+  startSimulation(instructions, forwards, instructionsWithStalls);
+  }, [startSimulation]);
 
   const actionsValue: SimulationActions = React.useMemo(
     () => ({
@@ -195,9 +209,12 @@ export function SimulationProvider({ children }: PropsWithChildren) {
       resetSimulation,
       pauseSimulation,
       resumeSimulation,
+      startSimulationWithStalls, 
+      startSimulationWithForwarding,
     }),
-    [startSimulation, resetSimulation] // pause/resume don't change
+    [startSimulation, resetSimulation]
   );
+
 
   return (
     <SimulationStateContext.Provider value={stateValue}>
@@ -223,4 +240,12 @@ export function useSimulationActions() {
     throw new Error('useSimulationActions must be used within a SimulationProvider');
   }
   return context;
+}
+
+export function useForwards() {
+  const context = React.useContext(SimulationStateContext);
+  if (context === undefined) {
+    throw new Error('useForwards must be used within a SimulationProvider');
+  }
+  return context.forwards ?? [];
 }
