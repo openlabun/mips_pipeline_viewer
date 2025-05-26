@@ -1,125 +1,113 @@
 // src/components/pipeline-visualization.tsx
 "use client";
 
-import type * as React from 'react';
-import {
-  Table,
-  TableHeader,
-  TableRow,
-  TableHead,
-  TableBody,
-  TableCell,
-  TableCaption,
-} from '@/components/ui/table';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Download, Code2, Cpu, MemoryStick, CheckSquare } from 'lucide-react';
-import { cn } from '@/lib/utils';
-import { useSimulationState } from '@/context/SimulationContext'; // Import context hook
+import React from "react";
+import { useSimulationState } from "@/context/SimulationContext";
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import type { PipelineCell } from "@/context/SimulationContext";
 
-const STAGES = [
-  { name: 'IF', icon: Download },
-  { name: 'ID', icon: Code2 },
-  { name: 'EX', icon: Cpu },
-  { name: 'MEM', icon: MemoryStick },
-  { name: 'WB', icon: CheckSquare },
-] as const;
+function getCellClass(type: string | null) {
+  switch (type) {
+    case "stall":
+      return "bg-yellow-200 text-yellow-900 border-yellow-500 border-2";
+    case "load-use":
+      return "bg-red-200 text-red-900 border-red-500 border-2";
+    case "forwardA":
+    case "forwardB":
+      return "bg-green-200 text-green-900 border-green-500 border-2";
+    case "normal":
+      return "bg-blue-100";
+    default:
+      return "";
+  }
+}
 
 export function PipelineVisualization() {
-  // Get state from context
   const {
-    instructions,
-    currentCycle: cycle,
-    maxCycles, // Max cycles determines the number of columns
-    isRunning,
-    instructionStages, // Use the pre-calculated stages
-    isFinished, // Use the finished flag from context
+    parsedInstructions,
+    currentCycle,
+    maxCycles,
+    isFinished,
+    mode,
+    pipelineMatrix,
   } = useSimulationState();
 
-
-  // Use maxCycles for the number of columns if it's calculated, otherwise 0
-  const totalCyclesToDisplay = maxCycles > 0 ? maxCycles : 0;
-  const cycleNumbers = Array.from({ length: totalCyclesToDisplay }, (_, i) => i + 1);
-
-  // if (instructions.length === 0) return null; // Handled in page.tsx
+  // Si no hay instrucciones, no renderizar nada
+  if (!pipelineMatrix || pipelineMatrix.length === 0) {
+    return null;
+  }
 
   return (
-    <Card className="w-full overflow-hidden">
+    <Card className="w-full overflow-x-auto">
       <CardHeader>
-        <CardTitle>Pipeline Progress</CardTitle>
+        <CardTitle>Pipeline Visualization</CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="overflow-x-auto">
-          <Table className="min-w-max">
-            <TableCaption>MIPS instruction pipeline visualization</TableCaption>
-            <TableHeader>
-              <TableRow>
-                 {/* Use bg-card for sticky header cell background */}
-                <TableHead className="w-[150px] sticky left-0 bg-card z-10 border-r">Instruction</TableHead>
-                {cycleNumbers.map((c) => (
-                  <TableHead key={`cycle-${c}`} className="text-center w-16">
-                    {c}
-                  </TableHead>
-                ))}
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {instructions.map((inst, instIndex) => (
-                <TableRow key={`inst-${instIndex}`}>
-                   {/* Use bg-card for sticky instruction cell background */}
-                  <TableCell className="font-mono sticky left-0 bg-card z-10 border-r">
-                    {inst}
-                  </TableCell>
-                  {cycleNumbers.map((c) => {
-                    // Determine the stage for this instruction *at this cycle column 'c'*
-                    // Instruction 'instIndex' entered stage 's' at cycle 'instIndex + s + 1'
-                    // So, at cycle 'c', the stage index is 'c - instIndex - 1'
-                    const expectedStageIndex = c - instIndex - 1;
-                    const currentStageIndex = instructionStages[instIndex]; // Get the actual stage from context for the *current* cycle
-
-                    const isInPipelineAtThisCycle = expectedStageIndex >= 0 && expectedStageIndex < STAGES.length;
-                    const currentStageData = isInPipelineAtThisCycle ? STAGES[expectedStageIndex] : null;
-
-                    // Is this cell representing the instruction's *actual* current stage in the *current* simulation cycle?
-                    const isActualCurrentStage = currentStageIndex !== null && expectedStageIndex === currentStageIndex && c === cycle;
-
-                     // Only animate if the simulation is running AND not yet completed
-                     const shouldAnimate = isActualCurrentStage && isRunning && !isFinished;
-                     // Highlight statically if it's the current stage but paused/stopped (and not completed)
-                     const shouldHighlightStatically = isActualCurrentStage && !isRunning && !isFinished;
-                     // Mark past stages
-                     const isPastStage = isInPipelineAtThisCycle && c < cycle;
-
-                    return (
-                      <TableCell
-                        key={`inst-${instIndex}-cycle-${c}`}
-                        className={cn(
-                          'text-center w-16 h-14 transition-colors duration-300',
-                          // 1. If simulation is completed, reset all cells to default background
-                          isFinished ? 'bg-background' :
-                          // 2. If it's the current stage and running, animate
-                          shouldAnimate ? 'bg-accent text-accent-foreground animate-pulse-bg' :
-                          // 3. If it's the current stage but paused/stopped, highlight statically
-                          shouldHighlightStatically ? 'bg-accent text-accent-foreground' :
-                          // 4. If it's a past stage in the pipeline (and not current/finished), use secondary
-                          isPastStage ? 'bg-secondary text-secondary-foreground' :
-                          // 5. Otherwise (future stage or empty cell), use default background
-                          'bg-background'
-                        )}
-                      >
-                        {/* Show icon/name if the stage should be active in this cycle column AND simulation is not completed */}
-                        {currentStageData && !isFinished && (
-                           <div className="flex flex-col items-center justify-center">
-                             <currentStageData.icon className="w-4 h-4 mb-1" aria-hidden="true" />
-                             <span className="text-xs">{currentStageData.name}</span>
-                           </div>
-                         )}
-                      </TableCell>
-                    );
-                  })}
-                </TableRow>
+        <table className="min-w-full border-collapse text-center">
+          <thead>
+            <tr>
+              <th className="border p-2">#</th>
+              <th className="border p-2">Instruction</th>
+              <th className="border p-2">Mnemonic</th>
+              {Array.from({ length: maxCycles }, (_, idx) => (
+                <th key={idx} className="border p-2">
+                  {idx + 1}
+                </th>
               ))}
-            </TableBody>
-          </Table>
+            </tr>
+          </thead>
+          <tbody>
+            {pipelineMatrix.map((row: PipelineCell[], idx: number) => (
+              <tr key={idx}>
+                <td className="border p-2">{idx + 1}</td>
+                <td className="border p-2 font-mono">
+                  {parsedInstructions[idx]?.hex}
+                </td>
+                <td className="border p-2 font-mono">
+                  {parsedInstructions[idx]?.mnemonic}
+                </td>
+                {Array.from({ length: maxCycles }, (_, cidx) => {
+                  // Busca la celda para este ciclo
+                  const cell = row.find((cell) => cell.cycle === cidx + 1);
+                  
+                  // Si no hay celda o estamos más allá del ciclo actual
+                  if (!cell || !cell.stage || cidx + 1 > currentCycle) {
+                    return <td key={cidx} className="border p-2"></td>;
+                  }
+                  
+                  return (
+                    <td
+                      key={cidx}
+                      className={`border p-2 ${getCellClass(cell.type)}`}
+                    >
+                      {cell.stage}
+                      {cell.type && cell.type !== "normal" && cell.info && (
+                        <div className="text-xs font-semibold mt-1">{cell.info}</div>
+                      )}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <Badge variant="secondary">
+            Modo: {mode === "stall" ? "Stall (sin forwarding)" : "Forwarding"}
+          </Badge>
+          <Badge variant="outline">
+            Ciclo actual: {currentCycle} / {maxCycles}
+          </Badge>
+          {isFinished && (
+            <Badge variant="destructive">Simulación finalizada</Badge>
+          )}
+        </div>
+        <div className="mt-2 flex flex-wrap gap-2 text-xs">
+          <Badge className="bg-yellow-200 text-yellow-900">Stall (RAW Hazard)</Badge>
+          <Badge className="bg-red-200 text-red-900">Load-Use Hazard</Badge>
+          <Badge className="bg-green-200 text-green-900">Forwarding</Badge>
+          <Badge className="bg-blue-100 text-blue-900">Normal</Badge>
         </div>
       </CardContent>
     </Card>
