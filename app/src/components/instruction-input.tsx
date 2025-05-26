@@ -7,38 +7,50 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { useSimulationActions, useSimulationState } from '@/context/SimulationContext'; // Import context hooks
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { useSimulationActions, useSimulationState } from '@/context/SimulationContext';
 import { Play, Pause, RotateCcw } from 'lucide-react';
 
 interface InstructionInputProps {
   onInstructionsSubmit: (instructions: string[]) => void;
   onReset: () => void;
-  isRunning: boolean; // Keep isRunning prop for button state logic
+  isRunning: boolean;
 }
+
+// Pipeline modes matching the context
+type StallHandling = 'default' | 'stall' | 'forward';
+
+const PIPELINE_MODES = [
+  { value: 'default', label: 'Default Pipeline' },
+  { value: 'stall', label: 'Stall Handling' },
+  { value: 'forward', label: 'Forwarding' },
+] as const;
 
 const HEX_REGEX = /^[0-9a-fA-F]{8}$/; // Basic check for 8 hex characters
 
 export function InstructionInput({ onInstructionsSubmit, onReset, isRunning }: InstructionInputProps) {
   const [inputText, setInputText] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
-  const { pauseSimulation, resumeSimulation } = useSimulationActions();
-  const { currentCycle, isFinished, instructions } = useSimulationState(); // Get state from context
+  const { pauseSimulation, resumeSimulation, setStallHandling } = useSimulationActions();
+  const { currentCycle, isFinished, instructions, stallHandling } = useSimulationState();
 
   // Reset input text when instructions are cleared (e.g., on reset)
   useEffect(() => {
     if (instructions.length === 0) {
       setInputText('');
-      setError(null); // Clear errors on reset as well
+      setError(null);
     }
   }, [instructions]);
 
-
   const hasStarted = currentCycle > 0;
-  // Can only pause/resume if started and not finished
   const canPauseResume = hasStarted && !isFinished;
-  // Input/Start button should be disabled if simulation has started and isn't finished
   const disableInputAndStart = hasStarted && !isFinished;
-
 
   const handleSubmit = () => {
     setError(null);
@@ -69,6 +81,9 @@ export function InstructionInput({ onInstructionsSubmit, onReset, isRunning }: I
     }
   };
 
+  const handleModeChange = (mode: StallHandling) => {
+    setStallHandling(mode);
+  };
 
   return (
     <Card className="w-full max-w-md">
@@ -76,40 +91,75 @@ export function InstructionInput({ onInstructionsSubmit, onReset, isRunning }: I
         <CardTitle>MIPS Instructions</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
+        {/* Pipeline Mode Selector */}
+        <div className="grid w-full gap-1.5">
+          <Label htmlFor="pipeline-mode">Pipeline Mode</Label>
+          <Select
+            value={stallHandling}
+            onValueChange={handleModeChange}
+            disabled={disableInputAndStart} // Disable mode changes during simulation
+          >
+            <SelectTrigger id="pipeline-mode">
+              <SelectValue placeholder="Select pipeline mode" />
+            </SelectTrigger>
+            <SelectContent>
+              {PIPELINE_MODES.map((mode) => (
+                <SelectItem key={mode.value} value={mode.value}>
+                  {mode.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">
+            {stallHandling === 'default' && 'Standard 5-stage pipeline without hazard handling'}
+            {stallHandling === 'stall' && 'Pipeline with stall insertion for data hazards'}
+            {stallHandling === 'forward' && 'Pipeline with data forwarding and selective stalling'}
+          </p>
+        </div>
+
+        {/* Instructions Input */}
         <div className="grid w-full gap-1.5">
           <Label htmlFor="instructions">Enter Hex Instructions (one per line)</Label>
           <Textarea
             id="instructions"
-            placeholder="e.g., 00a63820..." // Removed 0x prefix for consistency with regex
+            placeholder="e.g., 00a63820..."
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
             rows={5}
             className="font-mono"
-            // Disable input field if simulation has started and not yet finished
             disabled={disableInputAndStart}
             aria-label="MIPS Hex Instructions Input"
           />
           {error && <p className="text-sm text-destructive">{error}</p>}
         </div>
+
+        {/* Control Buttons */}
         <div className="flex justify-between items-center gap-2">
-           {/* Start Button: Disabled if started and not finished */}
           <Button onClick={handleSubmit} disabled={disableInputAndStart} className="flex-1">
-             {isFinished ? 'Finished' : hasStarted ? 'Running...' : 'Start Simulation'}
+            {isFinished ? 'Finished' : hasStarted ? 'Running...' : 'Start Simulation'}
           </Button>
 
-          {/* Conditional Play/Pause Button: Show only when pause/resume is possible */}
           {canPauseResume && (
-             <Button variant="outline" onClick={handlePauseResume} size="icon" aria-label={isRunning ? 'Pause Simulation' : 'Resume Simulation'}>
+            <Button 
+              variant="outline" 
+              onClick={handlePauseResume} 
+              size="icon" 
+              aria-label={isRunning ? 'Pause Simulation' : 'Resume Simulation'}
+            >
               {isRunning ? <Pause /> : <Play />}
-             </Button>
+            </Button>
           )}
 
-          {/* Reset Button: Show only if the simulation has started */}
-           {hasStarted && (
-              <Button variant="destructive" onClick={onReset} size="icon" aria-label="Reset Simulation">
-                <RotateCcw />
-              </Button>
-           )}
+          {hasStarted && (
+            <Button 
+              variant="destructive" 
+              onClick={onReset} 
+              size="icon" 
+              aria-label="Reset Simulation"
+            >
+              <RotateCcw />
+            </Button>
+          )}
         </div>
       </CardContent>
     </Card>

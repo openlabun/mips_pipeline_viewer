@@ -1,4 +1,3 @@
-// src/components/pipeline-visualization.tsx
 "use client";
 
 import type * as React from 'react';
@@ -12,9 +11,9 @@ import {
   TableCaption,
 } from '@/components/ui/table';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Download, Code2, Cpu, MemoryStick, CheckSquare } from 'lucide-react';
+import { Download, Code2, Cpu, MemoryStick, CheckSquare, Pause, FastForward } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { useSimulationState } from '@/context/SimulationContext'; // Import context hook
+import { useSimulationState, useStallInformation } from '@/context/SimulationContext';
 
 const STAGES = [
   { name: 'IF', icon: Download },
@@ -24,39 +23,163 @@ const STAGES = [
   { name: 'WB', icon: CheckSquare },
 ] as const;
 
+const STALL_STAGE = { name: 'STALL', icon: Pause };
+const FORWARD_STAGE = { name: 'FORWARD', icon: FastForward };
+
+// Pipeline modes matching context type
+type StallHandling = 'default' | 'stall' | 'forward';
+
+const PIPELINE_MODES = [
+  { value: 'default', label: 'Default Pipeline' },
+  { value: 'stall', label: 'Stall Handling' },
+  { value: 'forward', label: 'Forwarding' },
+] as const;
+
 export function PipelineVisualization() {
-  // Get state from context
   const {
     instructions,
     currentCycle: cycle,
-    maxCycles, // Max cycles determines the number of columns
+    maxCycles,
     isRunning,
-    instructionStages, // Use the pre-calculated stages
-    isFinished, // Use the finished flag from context
+    instructionStages,
+    isFinished,
+    stallHandling, // Get current stall handling mode from context
   } = useSimulationState();
 
+  const { 
+    isStallEnabled, 
+    isForwardEnabled,
+    pipelineMatrix,
+    forwardedInstructions 
+  } = useStallInformation();
 
-  // Use maxCycles for the number of columns if it's calculated, otherwise 0
   const totalCyclesToDisplay = maxCycles > 0 ? maxCycles : 0;
   const cycleNumbers = Array.from({ length: totalCyclesToDisplay }, (_, i) => i + 1);
 
-  // if (instructions.length === 0) return null; // Handled in page.tsx
+  // Use the stallHandling from context directly
+  const currentMode = stallHandling;
+
+  const renderStageCell = (instIndex: number, cycleNum: number) => {
+    let currentStageData = null;
+    let isActualCurrentStage = false;
+    let isPastStage = false;
+    let isStall = false;
+    let isForward = false;
+
+    if (currentMode !== 'default' && pipelineMatrix.length > 0) {
+      // Use pipeline matrix for stall/forward modes
+      const stageValue = pipelineMatrix[instIndex]?.[cycleNum - 1]; // cycleNum is 1-based, array is 0-based
+      
+      if (stageValue === "STALL") {
+        currentStageData = STALL_STAGE;
+        isStall = true;
+      } else if (stageValue === "FORWARD") {
+        currentStageData = FORWARD_STAGE;
+        isForward = true;
+      } else if (stageValue && stageValue !== "") {
+        const stageIndex = STAGES.findIndex(stage => stage.name === stageValue);
+        currentStageData = stageIndex >= 0 ? STAGES[stageIndex] : null;
+      }
+      
+      // Check if this is the current stage
+      isActualCurrentStage = cycleNum === cycle && instructionStages[instIndex] !== null && currentStageData !== null;
+      isPastStage = (currentStageData && cycleNum < cycle) ?? false;
+    } else {
+      // Default mode logic
+      const expectedStageIndex = cycleNum - instIndex - 1;
+      const currentStageIndex = instructionStages[instIndex];
+
+      const isInPipelineAtThisCycle = expectedStageIndex >= 0 && expectedStageIndex < STAGES.length;
+      currentStageData = isInPipelineAtThisCycle ? STAGES[expectedStageIndex] : null;
+
+      isActualCurrentStage = currentStageIndex !== null && expectedStageIndex === currentStageIndex && cycleNum === cycle;
+      isPastStage = isInPipelineAtThisCycle && cycleNum < cycle;
+    }
+
+    // Animation and highlighting logic
+    const shouldAnimate = isActualCurrentStage && isRunning && !isFinished;
+    const shouldHighlightStatically = isActualCurrentStage && !isRunning && !isFinished;
+
+    // Cell styling based on stage type
+    const getCellStyles = () => {
+      if (isFinished) return 'bg-background';
+      
+      if (isStall) {
+        if (shouldAnimate) return 'bg-yellow-300 text-yellow-900 animate-pulse-bg';
+        if (shouldHighlightStatically) return 'bg-yellow-300 text-yellow-900';
+        if (isPastStage) return 'bg-yellow-200 text-yellow-800';
+        return 'bg-yellow-100 text-yellow-700';
+      }
+      
+      if (isForward) {
+        if (shouldAnimate) return 'bg-purple-300 text-purple-900 animate-pulse-bg';
+        if (shouldHighlightStatically) return 'bg-purple-300 text-purple-900';
+        if (isPastStage) return 'bg-purple-200 text-purple-800';
+        return 'bg-purple-100 text-purple-700';
+      }
+      
+      // Default stage styling
+      if (shouldAnimate) return 'bg-primary text-primary-foreground animate-pulse-bg';
+      if (shouldHighlightStatically) return 'bg-primary text-primary-foreground';
+      if (isPastStage) return 'bg-secondary text-secondary-foreground';
+      return 'bg-background';
+    };
+
+    return (
+      <TableCell
+        key={`inst-${instIndex}-cycle-${cycleNum}`}
+        className={cn(
+          'text-center w-16 h-14 transition-colors duration-300 min-w-[4rem] max-w-[4rem]', // Fixed width to ensure uniformity
+          getCellStyles()
+        )}
+      >
+        {currentStageData && !isFinished && (
+          <div className="flex flex-col items-center justify-center">
+            <currentStageData.icon className="w-4 h-4 mb-1" aria-hidden="true" />
+            <span className="text-xs font-medium truncate w-full">{currentStageData.name}</span>
+          </div>
+        )}
+      </TableCell>
+    );
+  };
 
   return (
     <Card className="w-full overflow-hidden">
-      <CardHeader>
+      <CardHeader className="space-y-4">
         <CardTitle>Pipeline Progress</CardTitle>
+        
+        {/* Mode indicator */}
+        <div className="text-sm text-muted-foreground">
+          Current mode: <span className="font-medium capitalize">{currentMode}</span>
+          {currentMode === 'stall' && isStallEnabled && (
+            <span className="text-blue-600 ml-2">
+              (Stall detection active)
+            </span>
+          )}
+          {currentMode === 'forward' && isForwardEnabled && (
+            <span className="text-purple-600 ml-2">
+              (Forwarding active)
+            </span>
+          )}
+        </div>
       </CardHeader>
+      
       <CardContent>
         <div className="overflow-x-auto">
           <Table className="min-w-max">
-            <TableCaption>MIPS instruction pipeline visualization</TableCaption>
+            <TableCaption>
+              MIPS instruction pipeline visualization - {PIPELINE_MODES.find(m => m.value === currentMode)?.label}
+            </TableCaption>
             <TableHeader>
               <TableRow>
-                 {/* Use bg-card for sticky header cell background */}
-                <TableHead className="w-[150px] sticky left-0 bg-card z-10 border-r">Instruction</TableHead>
+                <TableHead className="w-[150px] sticky left-0 bg-card z-10 border-r">
+                  Instruction
+                </TableHead>
                 {cycleNumbers.map((c) => (
-                  <TableHead key={`cycle-${c}`} className="text-center w-16">
+                  <TableHead 
+                    key={`cycle-${c}`} 
+                    className="text-center w-16 min-w-[4rem] max-w-[4rem]" // Fixed width for uniformity
+                  >
                     {c}
                   </TableHead>
                 ))}
@@ -65,61 +188,42 @@ export function PipelineVisualization() {
             <TableBody>
               {instructions.map((inst, instIndex) => (
                 <TableRow key={`inst-${instIndex}`}>
-                   {/* Use bg-card for sticky instruction cell background */}
                   <TableCell className="font-mono sticky left-0 bg-card z-10 border-r">
                     {inst}
                   </TableCell>
-                  {cycleNumbers.map((c) => {
-                    // Determine the stage for this instruction *at this cycle column 'c'*
-                    // Instruction 'instIndex' entered stage 's' at cycle 'instIndex + s + 1'
-                    // So, at cycle 'c', the stage index is 'c - instIndex - 1'
-                    const expectedStageIndex = c - instIndex - 1;
-                    const currentStageIndex = instructionStages[instIndex]; // Get the actual stage from context for the *current* cycle
-
-                    const isInPipelineAtThisCycle = expectedStageIndex >= 0 && expectedStageIndex < STAGES.length;
-                    const currentStageData = isInPipelineAtThisCycle ? STAGES[expectedStageIndex] : null;
-
-                    // Is this cell representing the instruction's *actual* current stage in the *current* simulation cycle?
-                    const isActualCurrentStage = currentStageIndex !== null && expectedStageIndex === currentStageIndex && c === cycle;
-
-                     // Only animate if the simulation is running AND not yet completed
-                     const shouldAnimate = isActualCurrentStage && isRunning && !isFinished;
-                     // Highlight statically if it's the current stage but paused/stopped (and not completed)
-                     const shouldHighlightStatically = isActualCurrentStage && !isRunning && !isFinished;
-                     // Mark past stages
-                     const isPastStage = isInPipelineAtThisCycle && c < cycle;
-
-                    return (
-                      <TableCell
-                        key={`inst-${instIndex}-cycle-${c}`}
-                        className={cn(
-                          'text-center w-16 h-14 transition-colors duration-300',
-                          // 1. If simulation is completed, reset all cells to default background
-                          isFinished ? 'bg-background' :
-                          // 2. If it's the current stage and running, animate
-                          shouldAnimate ? 'bg-accent text-accent-foreground animate-pulse-bg' :
-                          // 3. If it's the current stage but paused/stopped, highlight statically
-                          shouldHighlightStatically ? 'bg-accent text-accent-foreground' :
-                          // 4. If it's a past stage in the pipeline (and not current/finished), use secondary
-                          isPastStage ? 'bg-secondary text-secondary-foreground' :
-                          // 5. Otherwise (future stage or empty cell), use default background
-                          'bg-background'
-                        )}
-                      >
-                        {/* Show icon/name if the stage should be active in this cycle column AND simulation is not completed */}
-                        {currentStageData && !isFinished && (
-                           <div className="flex flex-col items-center justify-center">
-                             <currentStageData.icon className="w-4 h-4 mb-1" aria-hidden="true" />
-                             <span className="text-xs">{currentStageData.name}</span>
-                           </div>
-                         )}
-                      </TableCell>
-                    );
-                  })}
+                  {cycleNumbers.map((c) => renderStageCell(instIndex, c))}
                 </TableRow>
               ))}
             </TableBody>
           </Table>
+        </div>
+        
+        {/* Legend */}
+        <div className="mt-4 pt-4 border-t">
+          <div className="flex flex-wrap gap-4 text-sm">
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 bg-primary rounded"></div>
+              <span>Current Stage</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 bg-secondary rounded"></div>
+              <span>Completed Stage</span>
+            </div>
+            {currentMode !== 'default' && (
+              <>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 bg-yellow-300 rounded"></div>
+                  <span>Stall</span>
+                </div>
+                {currentMode === 'forward' && (
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 bg-purple-300 rounded"></div>
+                    <span>Forward</span>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
         </div>
       </CardContent>
     </Card>
