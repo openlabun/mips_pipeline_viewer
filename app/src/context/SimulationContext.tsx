@@ -32,6 +32,7 @@ interface SimulationActions {
   resetSimulation: () => void;
   pauseSimulation: () => void;
   resumeSimulation: () => void;
+  toggleStall: (isStall: boolean) => void;
 }
 
 // Create the contexts
@@ -259,7 +260,8 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
 export function SimulationProvider({ children }: PropsWithChildren) {
   const [simulationState, setSimulationState] =
     React.useState<SimulationState>(initialState);
-  const intervalRef = React.useRef<NodeJS.Timeout | null>(null);
+  
+    const intervalRef = React.useRef<NodeJS.Timeout | null>(null);
 
   const clearTimer = () => {
     if (intervalRef.current) {
@@ -268,9 +270,12 @@ export function SimulationProvider({ children }: PropsWithChildren) {
     }
   };
 
-  /*React.useEffect(()=> {
-    console.log(simulationState.instructionStages);
-  }, [simulationState.instructionStages])*/
+  const toggleStall = React.useCallback((isStall: boolean) => {
+    setSimulationState(prev => ({
+      ...prev,
+      isStall: isStall
+    }));
+  }, []);
 
   const runClock = React.useCallback(() => {
     clearTimer(); // Clear any existing timer
@@ -290,7 +295,10 @@ export function SimulationProvider({ children }: PropsWithChildren) {
 
   const resetSimulation = React.useCallback(() => {
     clearTimer();
-    setSimulationState(initialState);
+    setSimulationState(prev => ({
+      ...initialState,
+      isStall: prev.isStall // Preserve stall state
+    }));
   }, []);
 
   const startSimulation = React.useCallback(
@@ -316,7 +324,8 @@ export function SimulationProvider({ children }: PropsWithChildren) {
         initialFinishedStages[index] = false;
       });
 
-      setSimulationState({
+      setSimulationState(prev => ({
+        ...initialState,
         stuckCell: null,
         instructions: submittedInstructions,
         currentCycle: 1, // Start from cycle 1
@@ -327,8 +336,8 @@ export function SimulationProvider({ children }: PropsWithChildren) {
         isFinished: false,
         instructionFinished: initialFinishedStages,
         forwardOrigin: null,
-        isStall: false
-      });
+        isStall: prev.isStall
+      }));
       // runClock will be triggered by the useEffect below when isRunning becomes true
     },
     [resetSimulation]
@@ -379,8 +388,9 @@ export function SimulationProvider({ children }: PropsWithChildren) {
       resetSimulation,
       pauseSimulation,
       resumeSimulation,
+      toggleStall,
     }),
-    [startSimulation, resetSimulation] // pause/resume don't change
+    [startSimulation, resetSimulation, pauseSimulation, resumeSimulation, toggleStall] // pause/resume don't change
   );
 
   return (
