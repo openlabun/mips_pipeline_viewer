@@ -1,4 +1,4 @@
-import type * as React from 'react';
+import * as React from 'react';
 import {
   Table,
   TableHeader,
@@ -11,8 +11,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Download, Code2, Cpu, MemoryStick, CheckSquare } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { useSimulationState } from '@/context/SimulationContext';
-import { useForwards } from '@/context/SimulationContext';
+import { useSimulationState, useForwards } from '@/context/SimulationContext';
 
 const STAGES = [
   { name: 'IF', icon: Download },
@@ -22,14 +21,16 @@ const STAGES = [
   { name: 'WB', icon: CheckSquare },
 ] as const;
 
-// Recibe useForwarding y useStalls como props
 export function PipelineVisualization({
-  useForwarding,
+  useForwarding: propUseForwarding,
   useStalls,
 }: {
   useForwarding: boolean;
   useStalls: boolean;
 }) {
+  // Forzar useForwarding a true, independientemente del valor de la prop
+  const useForwarding = true;
+  
   const {
     instructions,
     instructionsWithStalls,
@@ -39,19 +40,15 @@ export function PipelineVisualization({
     instructionStages,
     isFinished,
   } = useSimulationState();
+  
+  // Selecciona el arreglo correcto de instrucciones según las configuraciones
+  const displayedInstructions = useStalls && !useForwarding && instructionsWithStalls 
+    ? instructionsWithStalls 
+    : instructions;
 
-  // Selecciona el arreglo correcto de instrucciones
-  let displayedInstructions = instructions;
-  if (useForwarding) {
-    displayedInstructions = instructions;
-  } else if (useStalls && instructionsWithStalls) {
-    displayedInstructions = instructionsWithStalls;
-  }
-
-  // Selecciona los forwards solo si está activo el forwarding
-  const forwards = useForwarding ? useForwards() : [];
-  console.log('Forwards:', forwards);
-
+  // Obtener los forwards ya que useForwarding siempre es true
+  const forwards = useForwards();
+  
   const totalCyclesToDisplay = maxCycles > 0 ? maxCycles : 0;
   const cycleNumbers = Array.from({ length: totalCyclesToDisplay }, (_, i) => i + 1);
 
@@ -59,6 +56,9 @@ export function PipelineVisualization({
     <Card className="w-full overflow-hidden">
       <CardHeader>
         <CardTitle>Pipeline Progress</CardTitle>
+        <div className="text-sm text-green-600 font-medium">
+          Forwarding activo {forwards.length > 0 ? `(${forwards.length} paths)` : '(sin paths detectados)'}
+        </div>
       </CardHeader>
       <CardContent>
         <div className="overflow-x-auto">
@@ -111,13 +111,15 @@ export function PipelineVisualization({
                         isActualCurrentStage && !isRunning && !isFinished;
                       const isPastStage = isInPipelineAtThisCycle && c < cycle;
 
-                      // Detectar forwards solo si forwarding está activo
-                      const isForwardSource = forwards.some(
-                        (f) => f.fromInst === instIndex && f.fromStage === expectedStageIndex
+                      // Detectar forwards (siempre activo)
+                      const isForwardSource = forwards.some(f => 
+                        f.fromInst === instIndex && f.fromStage === expectedStageIndex
                       );
-                      const isForwardTarget = forwards.some(
-                        (f) => f.toInst === instIndex && f.toStage === expectedStageIndex
+
+                      const isForwardTarget = forwards.some(f => 
+                        f.toInst === instIndex && f.toStage === expectedStageIndex
                       );
+
                       const forwardInfo = forwards.find(
                         (f) =>
                           (f.fromInst === instIndex && f.fromStage === expectedStageIndex) ||
@@ -129,10 +131,7 @@ export function PipelineVisualization({
                           <TableCell
                             key={`inst-${instIndex}-cycle-${c}`}
                             className="text-center w-16 h-14 bg-white transition-colors duration-300"
-                            title=""
-                          >
-                            {/* vacío */}
-                          </TableCell>
+                          />
                         );
                       }
 
@@ -175,10 +174,7 @@ export function PipelineVisualization({
                             <TableCell
                               key={`inst-${instIndex}-cycle-${c}`}
                               className="text-center w-16 h-14 transition-colors duration-300 bg-background"
-                              title=""
-                            >
-                              {/* vacío */}
-                            </TableCell>
+                            />
                           );
                         }
                       }
@@ -218,16 +214,16 @@ export function PipelineVisualization({
                               <span className="text-xs">{currentStageData.name}</span>
                               {isForwardSource && (
                                 <span
-                                  className="absolute right-1 top-1 text-yellow-600 text-lg"
-                                  title="Forward source"
+                                  className="absolute right-1 top-1 text-yellow-600 text-lg font-bold"
+                                  title={`Forward source (reg $${forwardInfo?.reg})`}
                                 >
                                   ↘
                                 </span>
                               )}
                               {isForwardTarget && (
                                 <span
-                                  className="absolute left-1 bottom-1 text-green-600 text-lg"
-                                  title="Forward target"
+                                  className="absolute left-1 bottom-1 text-green-600 text-lg font-bold"
+                                  title={`Forward target (reg $${forwardInfo?.reg})`}
                                 >
                                   ↖
                                 </span>
