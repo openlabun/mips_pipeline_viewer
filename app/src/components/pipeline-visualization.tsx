@@ -15,6 +15,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Download, Code2, Cpu, MemoryStick, CheckSquare } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useSimulationState } from '@/context/SimulationContext'; // Import context hook
+import { ForwardingArrow, ArrowHeadDefs } from './ui/line';
 
 const STAGES = [
   { name: 'IF', icon: Download },
@@ -33,7 +34,10 @@ export function PipelineVisualization() {
     isRunning,
     instructionStages, // Use the pre-calculated stages
     isFinished, // Use the finished flag from context
-    instructionFinished
+    instructionFinished,
+    stuckCell,
+    forwardOrigin,
+    isStall
   } = useSimulationState();
 
 
@@ -49,7 +53,7 @@ export function PipelineVisualization() {
         <CardTitle>Pipeline Progress</CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto relative">
           <Table className="min-w-max">
             <TableCaption>MIPS instruction pipeline visualization</TableCaption>
             <TableHeader>
@@ -70,7 +74,10 @@ export function PipelineVisualization() {
                   <TableCell className="font-mono sticky left-0 bg-card z-10 border-r">
                     {inst}
                   </TableCell>
+                  
                   {cycleNumbers.map((c) => {
+                    
+                    
                     // Determine the stage for this instruction *at this cycle column 'c'*
                     // Instruction 'instIndex' entered stage 's' at cycle 'instIndex + s + 1'
                     // So, at cycle 'c', the stage index is 'c - instIndex - 1'
@@ -81,7 +88,7 @@ export function PipelineVisualization() {
                     const currentStageData = isInPipelineAtThisCycle ? STAGES[expectedStageIndex] : null;
 
                     // Is this cell representing the instruction's *actual* current stage in the *current* simulation cycle?
-                    const isActualCurrentStage = currentStageIndex !== null && expectedStageIndex === currentStageIndex && c === cycle;
+                    const isActualCurrentStage = currentStageIndex !== null && expectedStageIndex === currentStageIndex; //&& c === cycle;
 
                      // Only animate if the simulation is running AND not yet completed
                      const shouldAnimate = isActualCurrentStage && isRunning && !isFinished;
@@ -91,17 +98,20 @@ export function PipelineVisualization() {
                      const isFinishedInst = instructionFinished[instIndex]; // check if the current instruction is finished or not
                      const isPastStage = (c - (instIndex + 1)) < (currentStageIndex === null ? (isFinishedInst ? Infinity : -1) : currentStageIndex) && currentStageData;
 
-                     if (currentStageData && instIndex === 0 && currentStageData.name === "ID") {
-                      console.log(c);
-                     }
+                     const isStuckCell = stuckCell ? (stuckCell[0] === instIndex && stuckCell[1] === c) : false
+                     const isForwardOrigin = forwardOrigin ? (forwardOrigin[0] === instIndex && forwardOrigin[1] === c) : false
 
                     return (
                       <TableCell
                         key={`inst-${instIndex}-cycle-${c}`}
+                        data-row={instIndex}
+                        data-col={c}
                         className={cn(
                           'text-center w-16 h-14 transition-colors duration-300',
                           // 1. If simulation is completed, reset all cells to default background
                           isFinished ? 'bg-background' :
+                          isForwardOrigin ? 'bg-amber-500 text-accent-foreground' :
+                          isStuckCell ? 'bg-indigo-500 text-accent-foreground' :
                           // 2. If it's the current stage and running, animate
                           shouldAnimate ? 'bg-accent text-accent-foreground animate-pulse-bg' :
                           // 3. If it's the current stage but paused/stopped, highlight statically
@@ -110,6 +120,7 @@ export function PipelineVisualization() {
                           isPastStage ? 'bg-secondary text-secondary-foreground' :
                           // 5. Otherwise (future stage or empty cell), use default background
                           'bg-background'
+                          
                         )}
                       >
                         {/* Show icon/name if the stage should be active in this cycle column AND simulation is not completed */}
@@ -126,6 +137,13 @@ export function PipelineVisualization() {
               ))}
             </TableBody>
           </Table>
+          <svg className="absolute top-0 left-0 w-full h-full pointer-events-none z-20">
+          <ArrowHeadDefs />
+            {forwardOrigin && stuckCell && (
+              <ForwardingArrow from={forwardOrigin as [number,number]} to={stuckCell as [number,number]} dashed={true} animate={true} />
+            )}
+</svg>
+
         </div>
       </CardContent>
     </Card>
