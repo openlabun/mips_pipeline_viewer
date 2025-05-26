@@ -76,7 +76,7 @@ export function PipelineVisualization() {
                     // 🟢 Obtener estado de forwarding
                     const isForwarded = forwarding[instIndex]?.[expectedStageIndex] ?? false;
                     const tooltipText = isInPipelineAtThisCycle
-                      ? `${baseTooltip} | ${isForwarded ? 'Forwarded from previus instruction' : ''}`
+                      ? `${baseTooltip}  ${isForwarded ? '| Forwarded from previus instruction' : ''}`
                       : baseTooltip;
 
                     return (

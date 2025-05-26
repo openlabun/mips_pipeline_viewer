@@ -13,8 +13,9 @@ interface SimulationState {
   isRunning: boolean;
   stageCount: number;
   instructionStages: Record<number, number | null>;
-  forwarding: Record<number, Record<number, boolean>>; // Nuevo campo
+  forwarding: Record<number, Record<number, boolean>>;
   isFinished: boolean;
+  activateFW: boolean; // Activar forwarding
 }
 
 interface SimulationActions {
@@ -22,6 +23,7 @@ interface SimulationActions {
   resetSimulation: () => void;
   pauseSimulation: () => void;
   resumeSimulation: () => void;
+  setActivateFW: (enabled: boolean) => void; // Acción para activar/desactivar forwarding
 }
 
 const SimulationStateContext = React.createContext<SimulationState | undefined>(undefined);
@@ -36,8 +38,9 @@ const initialState: SimulationState = {
   isRunning: false,
   stageCount: DEFAULT_STAGE_COUNT,
   instructionStages: {},
-  forwarding: {}, // Inicializa vacío
+  forwarding: {},
   isFinished: false,
+  activateFW: true, // Por defecto activado
 };
 
 const calculateNextState = (currentState: SimulationState): SimulationState => {
@@ -51,77 +54,64 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
   let activeInstructions = 0;
 
   const decodeInstruction = (hex: string) => {
-  const bin = parseInt(hex, 16).toString(2).padStart(32, '0');
-  const opcode = bin.slice(0, 6);
-  if (opcode === '000000') {
-    // Tipo R
-    const rs = parseInt(bin.slice(6, 11), 2);
-    const rt = parseInt(bin.slice(11, 16), 2);
-    const rd = parseInt(bin.slice(16, 21), 2);
-    return { type: 'R', rs, rt, rd };
-  } else {
-    // Tipo I
-    const rs = parseInt(bin.slice(6, 11), 2);
-    const rt = parseInt(bin.slice(11, 16), 2);
-    return { type: 'I', rs, rt };
-  }
-};
-
-currentState.instructions.forEach((inst, index) => {
-  const isNop = inst === '00000000';
-  const stageIndex = nextCycle - index - 1;
-
-  if (isNop) {
-    if (stageIndex === 0) {
-      newInstructionStages[index] = 0;
-      newForwarding[index] = { 0: false }; // NOP no hace FW
-      activeInstructions++;
+    const bin = parseInt(hex, 16).toString(2).padStart(32, '0');
+    const opcode = bin.slice(0, 6);
+    if (opcode === '000000') {
+      const rs = parseInt(bin.slice(6, 11), 2);
+      const rt = parseInt(bin.slice(11, 16), 2);
+      const rd = parseInt(bin.slice(16, 21), 2);
+      return { type: 'R', rs, rt, rd };
     } else {
-      newInstructionStages[index] = null;
+      const rs = parseInt(bin.slice(6, 11), 2);
+      const rt = parseInt(bin.slice(11, 16), 2);
+      return { type: 'I', rs, rt };
     }
-  } else {
-    if (stageIndex >= 0 && stageIndex < currentState.stageCount) {
-      newInstructionStages[index] = stageIndex;
+  };
 
-      let didForward = false;
+  currentState.instructions.forEach((inst, index) => {
+    const isNop = inst === '00000000';
+    const stageIndex = nextCycle - index - 1;
 
-      if (index > 0) {
-        const prevStage = newInstructionStages[index - 1];
+    if (isNop) {
+      if (stageIndex === 0) {
+        newInstructionStages[index] = 0;
+        newForwarding[index] = { 0: false };
+        activeInstructions++;
+      } else {
+        newInstructionStages[index] = null;
+      }
+    } else {
+      if (stageIndex >= 0 && stageIndex < currentState.stageCount) {
+        newInstructionStages[index] = stageIndex;
 
-        if (prevStage !== null) {
-          // Decodificamos instrucciones
-          const prevInstDecoded = decodeInstruction(currentState.instructions[index - 1]);
-          const currInstDecoded = decodeInstruction(inst);
+        let didForward = false;
 
-          // Definimos qué registros "escribe" la instrucción anterior (productora)
-          // Para instrucciones R, escribe en rd
-          // Para instrucciones I, escribe en rt
-          const prevWriteReg = prevInstDecoded.type === 'R' ? prevInstDecoded.rd : prevInstDecoded.rt;
+        if (currentState.activateFW && index > 0) {
+          const prevStage = newInstructionStages[index - 1];
+          if (prevStage !== null) {
+            const prevInstDecoded = decodeInstruction(currentState.instructions[index - 1]);
+            const currInstDecoded = decodeInstruction(inst);
 
-          // Definimos qué registros "lee" la instrucción actual (consumidora)
-          // Ambas tipos leen rs, y tipo R también lee rt
-          const currReadRegs = currInstDecoded.type === 'R'
-            ? [currInstDecoded.rs, currInstDecoded.rt]
-            : [currInstDecoded.rs];
+            const prevWriteReg = prevInstDecoded.type === 'R' ? prevInstDecoded.rd : prevInstDecoded.rt;
+            const currReadRegs = currInstDecoded.type === 'R'
+              ? [currInstDecoded.rs, currInstDecoded.rt]
+              : [currInstDecoded.rs];
 
-          // Detectar dependencia: si prevWriteReg está en currReadRegs y prevStage está en EX/MEM y currStage en ID/EX
-          if ((prevStage === 2 || prevStage === 3) && (stageIndex === 2)) {
-            if (typeof prevWriteReg === 'number' && currReadRegs.includes(prevWriteReg) && prevWriteReg !== 0) { // reg 0 no se escribe nunca
-              didForward = true;
+            if ((prevStage === 2 || prevStage === 3) && (stageIndex === 2)) {
+              if (typeof prevWriteReg === 'number' && currReadRegs.includes(prevWriteReg) && prevWriteReg !== 0) {
+                didForward = true;
+              }
             }
           }
         }
+
+        newForwarding[index] = { [stageIndex]: didForward };
+        activeInstructions++;
+      } else {
+        newInstructionStages[index] = null;
       }
-
-      newForwarding[index] = { [stageIndex]: didForward };
-
-      activeInstructions++;
-    } else {
-      newInstructionStages[index] = null;
     }
-  }
-});
-
+  });
 
   const completionCycle = currentState.instructions.length > 0
     ? currentState.instructions.length + currentState.stageCount - 1
@@ -192,7 +182,8 @@ export function SimulationProvider({ children }: PropsWithChildren) {
       }
     });
 
-    setSimulationState({
+    setSimulationState((prev) => ({
+      ...prev,
       instructions: submittedInstructions,
       currentCycle: 1,
       maxCycles: calculatedMaxCycles,
@@ -201,7 +192,7 @@ export function SimulationProvider({ children }: PropsWithChildren) {
       instructionStages: initialStages,
       forwarding: initialForwarding,
       isFinished: false,
-    });
+    }));
   }, [resetSimulation]);
 
   const pauseSimulation = () => {
@@ -223,6 +214,13 @@ export function SimulationProvider({ children }: PropsWithChildren) {
     });
   };
 
+  const setActivateFW = (enabled: boolean) => {
+    setSimulationState((prevState) => ({
+      ...prevState,
+      activateFW: enabled,
+    }));
+  };
+
   React.useEffect(() => {
     if (simulationState.isRunning && !simulationState.isFinished) {
       runClock();
@@ -239,6 +237,7 @@ export function SimulationProvider({ children }: PropsWithChildren) {
     resetSimulation,
     pauseSimulation,
     resumeSimulation,
+    setActivateFW,
   }), [startSimulation, resetSimulation]);
 
   return (
@@ -273,12 +272,12 @@ export function getStageInfo(stageIndex: number | null, instruction: string): st
     return "NOP outside pipeline";
   }
 
-  switch(stageIndex) {
+  switch (stageIndex) {
     case 0: return "Instruction fetching (IF)";
     case 1: return "Instruction decoding (ID)";
     case 2: return "Execution (EX)";
     case 3: return "Memory access (MEM)";
-    case 4: return "Write back (WB)";
+    case 4: return "Write-back (WB)";
     default: return "Unknown stage";
   }
 }

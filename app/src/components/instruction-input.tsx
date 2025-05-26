@@ -1,4 +1,3 @@
-// src/components/instruction-input.tsx
 "use client";
 
 import React, { useState, useEffect } from 'react';
@@ -17,6 +16,8 @@ interface InstructionInputProps {
 }
 
 const HEX_REGEX = /^[0-9a-fA-F]{8}$/;
+
+
 
 function insertNopsForHazards(instructions: string[]): string[] {
   const newInstructions: string[] = [];
@@ -75,12 +76,56 @@ function insertNopsForHazards(instructions: string[]): string[] {
   return newInstructions;
 }
 
+function insertNopsForLoadHazards(instructions: string[]): string[] {
+  const newInstructions: string[] = [];
+
+  const decodeInstruction = (hex: string) => {
+    const bin = parseInt(hex, 16).toString(2).padStart(32, '0');
+    const opcode = bin.slice(0, 6);
+    if (opcode === '000000') {
+      // Tipo R
+      const rs = parseInt(bin.slice(6, 11), 2);
+      const rt = parseInt(bin.slice(11, 16), 2);
+      const rd = parseInt(bin.slice(16, 21), 2);
+      return { type: 'R', opcode, rs, rt, rd };
+    } else {
+      // Tipo I
+      const rs = parseInt(bin.slice(6, 11), 2);
+      const rt = parseInt(bin.slice(11, 16), 2);
+      return { type: 'I', opcode, rs, rt };
+    }
+  };
+
+  for (let i = 0; i < instructions.length; i++) {
+    const inst = instructions[i];
+    const decoded = decodeInstruction(inst);
+    newInstructions.push(inst);
+
+    if (!decoded) continue;
+
+    // Detectar si esta instrucción es LOAD (lw)
+    // lw opcode = 100011
+    const isLoad = decoded.type === 'I' && decoded.opcode === '100011';
+
+    if (isLoad && i + 1 < instructions.length) {
+      newInstructions.push(...Array(3).fill('00000000')); // Insert 3 NOPs
+    }
+  }
+
+  return newInstructions;
+}
+
+
 export function InstructionInput({ onInstructionsSubmit, onReset, isRunning }: InstructionInputProps) {
   const [inputText, setInputText] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
-  const [insertNops, setInsertNops] = useState<boolean>(true);
-  const { pauseSimulation, resumeSimulation } = useSimulationActions();
-  const { currentCycle, isFinished, instructions } = useSimulationState();
+  const [insertNops, setInsertNops] = useState<boolean>(false);
+
+  const { pauseSimulation, resumeSimulation, setActivateFW } = useSimulationActions();
+  const { currentCycle, isFinished, instructions, activateFW } = useSimulationState();
+
+  // Estado local para el checkbox de forwarding, sincronizado con contexto
+  const [activateForwarding, setActivateForwarding] = useState<boolean>(activateFW);
 
   useEffect(() => {
     if (instructions.length === 0) {
@@ -88,6 +133,11 @@ export function InstructionInput({ onInstructionsSubmit, onReset, isRunning }: I
       setError(null);
     }
   }, [instructions]);
+
+  useEffect(() => {
+    // Sincronizar estado local con el estado del contexto (por si cambia desde otro lado)
+    setActivateForwarding(activateFW);
+  }, [activateFW]);
 
   const hasStarted = currentCycle > 0;
   const canPauseResume = hasStarted && !isFinished;
@@ -109,9 +159,10 @@ export function InstructionInput({ onInstructionsSubmit, onReset, isRunning }: I
       return;
     }
 
-    const finalInstructions = insertNops
+    const finalInstructions = insertNops && activateForwarding !==insertNops
       ? insertNopsForHazards(currentInstructions)
-      : currentInstructions;
+      : activateFW && activateForwarding !==insertNops
+      ? insertNopsForLoadHazards(currentInstructions): currentInstructions;
 
     onInstructionsSubmit(finalInstructions);
   };
@@ -123,6 +174,28 @@ export function InstructionInput({ onInstructionsSubmit, onReset, isRunning }: I
       resumeSimulation();
     }
   };
+
+// Manejador para checkbox "insertNops"
+const handleInsertNopsChange = (checked: boolean | 'indeterminate') => {
+  const enabled = Boolean(checked);
+  setInsertNops(enabled);
+  if (enabled) {
+    // Si activamos insertNops, desactivamos forwarding
+    setActivateForwarding(false);
+    setActivateFW(false);
+  }
+};
+
+// Manejador para checkbox "activateForwarding"
+const handleForwardingChange = (checked: boolean | 'indeterminate') => {
+  const enabled = Boolean(checked);
+  setActivateForwarding(enabled);
+  setActivateFW(enabled);
+  if (enabled) {
+    // Si activamos forwarding, desactivamos insertNops
+    setInsertNops(false);
+  }
+};
 
   return (
     <Card className="w-full max-w-md">
@@ -149,10 +222,20 @@ export function InstructionInput({ onInstructionsSubmit, onReset, isRunning }: I
           <Checkbox
             id="insert-nops"
             checked={insertNops}
-            onCheckedChange={(checked) => setInsertNops(Boolean(checked))}
+            onCheckedChange={handleInsertNopsChange}
             disabled={disableInputAndStart}
           />
           <Label htmlFor="insert-nops">Activate Stalling for Data Hazards</Label>
+        </div>
+
+        <div className="flex items-center space-x-2">
+          <Checkbox
+            id="activate-forwarding"
+            checked={activateForwarding}
+            onCheckedChange={handleForwardingChange}
+            disabled={disableInputAndStart}
+          />
+          <Label htmlFor="activate-forwarding">Activate forwarding</Label>
         </div>
 
         <div className="flex justify-between items-center gap-2">
