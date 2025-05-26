@@ -23,23 +23,24 @@ interface InstructionInputProps {
   isRunning: boolean;
 }
 
-const HEX_REGEX = /^[0-9a-fA-F]{8}$/;
-
 // Pipeline modes matching the context
+type StallHandling = 'default' | 'stall' | 'forward';
+
 const PIPELINE_MODES = [
   { value: 'default', label: 'Default Pipeline' },
   { value: 'stall', label: 'Stall Handling' },
   { value: 'forward', label: 'Forwarding' },
 ] as const;
 
+const HEX_REGEX = /^[0-9a-fA-F]{8}$/; // Basic check for 8 hex characters
+
 export function InstructionInput({ onInstructionsSubmit, onReset, isRunning }: InstructionInputProps) {
   const [inputText, setInputText] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
-  
   const { pauseSimulation, resumeSimulation, setStallHandling } = useSimulationActions();
   const { currentCycle, isFinished, instructions, stallHandling } = useSimulationState();
 
-  // Reset input text when instructions are cleared
+  // Reset input text when instructions are cleared (e.g., on reset)
   useEffect(() => {
     if (instructions.length === 0) {
       setInputText('');
@@ -80,10 +81,8 @@ export function InstructionInput({ onInstructionsSubmit, onReset, isRunning }: I
     }
   };
 
-  const handleModeChange = (value: 'default' | 'stall' | 'forward') => {
-    if (!hasStarted) { // Only allow mode changes before simulation starts
-      setStallHandling(value);
-    }
+  const handleModeChange = (mode: StallHandling) => {
+    setStallHandling(mode);
   };
 
   return (
@@ -98,7 +97,7 @@ export function InstructionInput({ onInstructionsSubmit, onReset, isRunning }: I
           <Select
             value={stallHandling}
             onValueChange={handleModeChange}
-            disabled={hasStarted} // Disable mode changes during simulation
+            disabled={disableInputAndStart} // Disable mode changes during simulation
           >
             <SelectTrigger id="pipeline-mode">
               <SelectValue placeholder="Select pipeline mode" />
@@ -111,11 +110,11 @@ export function InstructionInput({ onInstructionsSubmit, onReset, isRunning }: I
               ))}
             </SelectContent>
           </Select>
-          {hasStarted && (
-            <p className="text-xs text-muted-foreground">
-              Mode cannot be changed during simulation
-            </p>
-          )}
+          <p className="text-xs text-muted-foreground">
+            {stallHandling === 'default' && 'Standard 5-stage pipeline without hazard handling'}
+            {stallHandling === 'stall' && 'Pipeline with stall insertion for data hazards'}
+            {stallHandling === 'forward' && 'Pipeline with data forwarding and selective stalling'}
+          </p>
         </div>
 
         {/* Instructions Input */}
@@ -161,16 +160,6 @@ export function InstructionInput({ onInstructionsSubmit, onReset, isRunning }: I
               <RotateCcw />
             </Button>
           )}
-        </div>
-
-        {/* Mode Description */}
-        <div className="text-xs text-muted-foreground border-t pt-2">
-          <strong>Current Mode:</strong>{' '}
-          {PIPELINE_MODES.find(mode => mode.value === stallHandling)?.label}
-          <br />
-          {stallHandling === 'default' && 'Standard 5-stage pipeline without hazard handling'}
-          {stallHandling === 'stall' && 'Pipeline with stall insertion for data hazards'}
-          {stallHandling === 'forward' && 'Pipeline with data forwarding to minimize stalls'}
         </div>
       </CardContent>
     </Card>
