@@ -19,31 +19,36 @@ export default function Home() {
   const hasStarted = currentCycle > 0;
 
   return (
-    <div className='min-h-screen bg-gradient-to-br from-blue-50/50 via-white to-indigo-50/50'>
-      <div className='container mx-auto p-4 md:p-8 flex flex-col items-center space-y-8'>
-        <header className='text-center space-y-4 pt-8'>
-          <h1 className='text-4xl md:text-5xl font-bold text-transparent bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text font-montserrat'>
-            MIPS Pipeline Viewer
-          </h1>
-          <p className='text-lg text-gray-600 font-montserrat font-medium max-w-2xl mx-auto leading-relaxed'>
-            Visualize the flow of MIPS instructions through a 5-stage pipeline
-            with advanced hazard detection and forwarding mechanisms.
-          </p>
-          <div className='flex justify-center space-x-8 text-sm text-gray-500 font-montserrat'>
-            <div className='flex items-center space-x-2'>
-              <div className='w-3 h-3 bg-blue-500 rounded-full'></div>
-              <span>Real-time Simulation</span>
-            </div>
-            <div className='flex items-center space-x-2'>
-              <div className='w-3 h-3 bg-green-500 rounded-full'></div>
-              <span>Data Forwarding</span>
-            </div>
-            <div className='flex items-center space-x-2'>
-              <div className='w-3 h-3 bg-red-500 rounded-full'></div>
-              <span>Hazard Detection</span>
-            </div>
-          </div>
-        </header>
+<div className='min-h-screen bg-gradient-to-br from-blue-50/50 via-white to-indigo-50/50'>
+  <div className='container mx-auto p-4 md:p-8 flex flex-col items-center space-y-8'>
+    <header className='text-center space-y-4 pt-8'>
+      <h1 className='text-4xl md:text-5xl font-bold text-transparent bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text font-montserrat'>
+        MIPS Pipeline Viewer
+      </h1>
+      <p className='text-lg text-gray-600 font-montserrat font-medium max-w-2xl mx-auto leading-relaxed'>
+        Visualize the flow of MIPS instructions through a 5-stage pipeline
+        with advanced hazard detection and forwarding mechanisms.
+      </p>
+      <div className='flex justify-center space-x-8 text-sm text-gray-500 font-montserrat'>
+        <div className='flex items-center space-x-2'>
+          <div className='w-3 h-3 bg-blue-500 rounded-full'></div>
+          <span>Real-time Simulation</span>
+        </div>
+        <div className='flex items-center space-x-2'>
+          <div className='w-3 h-3 bg-green-500 rounded-full'></div>
+          <span>Data Forwarding</span>
+        </div>
+        <div className='flex items-center space-x-2'>
+          <div className='w-3 h-3 bg-red-500 rounded-full'></div>
+          <span>Hazard Detection</span>
+        </div>
+        {/* Añadido branch skip */}
+        <div className='flex items-center space-x-2'>
+          <div className='w-3 h-3 bg-pink-500 rounded-full'></div>
+          <span>Branch Skip</span>
+        </div>
+      </div>
+    </header>
 
         {/* Pass context actions/state down */}
         <div className='w-full max-w-md'>

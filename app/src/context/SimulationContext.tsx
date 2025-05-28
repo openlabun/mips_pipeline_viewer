@@ -13,6 +13,21 @@ import {
 } from "react";
 import * as React from "react";
 
+import { cambioboton, haybranch } from "@/components/instruction-input";
+import { setomabranch } from "@/components/instruction-input";
+
+let pc: number=0;
+let branchMisses = 0; // contador global
+let cambiopip: boolean;
+let alarma: boolean;
+alarma = false;
+let misses: number = 0;
+let branch: boolean;
+let cambioboton2: boolean = false;
+
+
+console.log("xd",cambioboton2)
+
 // Define the stage names (optional, but good for clarity)
 const STAGE_NAMES = ["IF", "ID", "EX", "MEM", "WB"] as const;
 type StageName = (typeof STAGE_NAMES)[number];
@@ -73,6 +88,8 @@ interface SimulationActions {
   resumeSimulation: () => void;
   setForwardingEnabled: (enabled: boolean) => void;
   setStallsEnabled: (enabled: boolean) => void; // Add this new action
+  setBranchEnabled: (enabled: boolean) => void; // Add this new action
+
 }
 
 // Create the contexts
@@ -165,8 +182,16 @@ const detectHazards = (
 
   // If stalls are disabled, skip hazard detection entirely
   if (!stallsEnabled) {
+    cambioboton2 = false;
     return [hazards, forwardings, stalls];
   }
+  if (stallsEnabled) {
+    cambioboton2 = true;
+    
+  }
+
+
+
 
   for (let i = 1; i < instructions.length; i++) {
     const currentInst = registerUsage[i];
@@ -281,6 +306,10 @@ const calculatePrecedingStalls = (
   return totalStalls;
 };
 
+
+let entryCounter2 = 2; // Contador de entradas
+
+
 const calculateNextState = (currentState: SimulationState): SimulationState => {
   if (!currentState.isRunning || currentState.isFinished) {
     return currentState;
@@ -328,6 +357,43 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
       newInstructionStages[index] = null;
     }
   });
+
+
+  branch = setomabranch;
+  if (entryCounter2 > 2){
+    console.log("entrro a branches")
+        if ((haybranch[0] === "bne" || haybranch[0] === "beq") && branch == true){
+        console.log("hay branch")
+        
+        misses++;
+        console.log(misses)
+        alarma = true;
+        cambiopip = true;
+        console.log("salto del label",nextCycle)
+        
+
+      }else{
+        alarma = false;
+      }
+      cambiopip = false;
+      haybranch.shift()
+      entryCounter2 = 0
+      console.log(haybranch)
+
+
+
+}
+branch = false;
+entryCounter2 +=1
+console.log(entryCounter2)
+
+
+
+
+console.log(nextCycle)
+
+
+
 
   const completionCycle =
     currentState.instructions.length > 0
@@ -389,6 +455,7 @@ export function SimulationProvider({ children }: PropsWithChildren) {
   const startSimulation = useCallback(
     (submittedInstructions: string[]) => {
       clearTimer(); // Clear previous timer just in case
+      misses = 0;
       if (submittedInstructions.length === 0) {
         resetSimulation(); // Reset if no instructions submitted
         return;
@@ -490,6 +557,12 @@ export function SimulationProvider({ children }: PropsWithChildren) {
     });
   };
 
+    const setBranchEnabled = (enabled: boolean) => {
+    setSimulationState((prevState) => {
+      return { ...prevState, branchEnabled: enabled };
+    });
+  };
+
   useEffect(() => {
     if (simulationState.isRunning && !simulationState.isFinished) {
       runClock();
@@ -510,6 +583,7 @@ export function SimulationProvider({ children }: PropsWithChildren) {
       resumeSimulation,
       setForwardingEnabled,
       setStallsEnabled,
+      setBranchEnabled,
     }),
     [startSimulation, resetSimulation]
   );
@@ -543,3 +617,8 @@ export function useSimulationActions() {
   }
   return context;
 }
+
+
+export {alarma };
+export { misses };
+export {cambioboton2 };
