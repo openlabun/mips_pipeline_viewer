@@ -621,4 +621,4 @@ export function useSimulationActions() {
 
 export {alarma };
 export { misses };
-export {cambioboton2 };
+export {cambioboton2 }; 

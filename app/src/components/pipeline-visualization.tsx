@@ -400,7 +400,7 @@ export function PipelineVisualization() {
   <div className='flex items-center'>
     <div className='w-4 h-4 bg-pink-100 dark:bg-pink-900/30 mr-2 rounded-sm'></div>
     <span>Branch Skip</span>
-  </div>
+  </div> 
 </div>
 
       </CardContent>
