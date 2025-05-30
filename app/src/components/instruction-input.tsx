@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
 
+
 let fwd = false;
 let fwdprev: number[] = [];  // Ahora TypeScript sabe que el array contendrá números
 let fwdpos: number[] = [];
@@ -42,7 +43,7 @@ let setomabranchprev: boolean;
 let saltobranch: number;
 let saltables: boolean[] = []
 let entroID: boolean = false;
-let cambioboton: boolean=true;
+let cambioboton: boolean;
 let labelnum: number;
 let labelsigno: boolean;
 
@@ -52,7 +53,7 @@ const registers: Record<string, number> = {
   $zero: 0,
   $t0: 0, $t1: 0, $t2: 0, $t3: 0, $t4: 0, $t5: 0, $t6: 0, $t7: 0, $t8: 0, $9: 0,
   $s0: 0, $s1: 0, $s2: 0, $s3: 0, $s4: 0, $s5: 0, $s6: 0, $s7: 0,
-  $10: 10, $11: 20, $12: 0, $13: 0, $14: 0, $15: 0, $16: 0, $17: 0, $18: 0, $19: 0
+  $10: 0, $11: 0, $12: 0, $13: 0, $14: 0, $15: 0, $16: 0, $17: 0, $18: 0, $19: 0
   // Agrega más si necesitas
 };
 
@@ -468,15 +469,11 @@ console.log(saltables)
 
 
 
-  const [cambiobotonenpip, setCambiobotonenpip] = useState(false);
-  // Function to handle the change of stalls
   const handleStallsChange = (checked: boolean) => {
     setStallsEnabled(checked);
-    if (checked == true){
-      cambioboton = true;
-    }else{
-      cambioboton = false;
-    }
+
+    
+    
     
 
     // If stalls are disabled, also disable forwarding since it doesn't make sense
@@ -544,7 +541,7 @@ console.log(saltables)
               disabled={disableInputAndStart}
             />
             <Label htmlFor='stalls-mode' className='text-sm'>
-              Enable Hazard Detection & Stalls
+              Enable: Hazard detection, stalls & branch
             </Label>
           </div>
 
@@ -562,7 +559,7 @@ console.log(saltables)
                 !stallsEnabled ? 'text-muted-foreground' : ''
               }`}
             >
-              Enable Data Forwarding
+              Enable: Data forwarding
             </Label>
           </div>
 
@@ -667,5 +664,6 @@ console.log(saltables)
 export {saltables };
 export {haybranch };
 export {setomabranch};
-export {cambioboton };
+export {cambioboton};  
+
 export {labelsigno,saltobranch};

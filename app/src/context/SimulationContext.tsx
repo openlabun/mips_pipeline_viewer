@@ -15,6 +15,7 @@ import * as React from "react";
 
 import { cambioboton, haybranch, labelsigno, saltobranch } from "@/components/instruction-input";
 import { setomabranch } from "@/components/instruction-input";
+
 let pc: number=0;
 let branchMisses = 0; // contador global
 let cambiopip: boolean;
@@ -22,7 +23,7 @@ let alarma: boolean;
 alarma = false;
 let misses: number = 0;
 let branch: boolean;
-let cambioboton2: boolean = false;
+let cambioboton2: boolean = true;
 
 
 console.log("xd",cambioboton2)
@@ -361,7 +362,7 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
   branch = setomabranch;
   if (entryCounter2 > 2){
     console.log("entrro a branches")
-        if ((haybranch[0] === "bne" || haybranch[0] === "beq") && branch == true){
+        if ((haybranch[0] === "bne" || haybranch[0] === "beq") && branch == true && cambioboton2 == true){
         console.log("hay branch")
         
         misses++;

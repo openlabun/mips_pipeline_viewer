@@ -36,10 +36,9 @@ const STAGES = [
   { name: 'WB', icon: CheckSquare },
 ] as const;
 
-console.log("cambiobotonenpip",cambioboton)
 
 export function PipelineVisualization() {
-  // Get state from context
+
   const {
     instructions,
     currentCycle: cycle,
@@ -321,7 +320,7 @@ export function PipelineVisualization() {
     alarma === true &&
       saltables[instIndex] &&
       cellState.stage &&
-      ['ID', 'MEM', 'EX', 'IF', 'WB'].includes(cellState.stage.name) &&
+      ['ID', 'MEM', 'EX', 'IF', 'WB'].includes(cellState.stage.name) && cambioboton2 == true &&
       'bg-pink-300 text-black border border-pink-500 animate-pulse-bg'
   )}
 >
