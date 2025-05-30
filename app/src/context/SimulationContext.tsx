@@ -13,9 +13,8 @@ import {
 } from "react";
 import * as React from "react";
 
-import { cambioboton, haybranch } from "@/components/instruction-input";
+import { cambioboton, haybranch, labelsigno, saltobranch } from "@/components/instruction-input";
 import { setomabranch } from "@/components/instruction-input";
-
 let pc: number=0;
 let branchMisses = 0; // contador global
 let cambiopip: boolean;
@@ -315,7 +314,7 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
     return currentState;
   }
 
-  const nextCycle = currentState.currentCycle + 1;
+  let nextCycle = currentState.currentCycle + 1;
   const newInstructionStages: Record<number, number | null> = {};
   let activeInstructions = 0;
 
@@ -370,6 +369,10 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
         alarma = true;
         cambiopip = true;
         console.log("salto del label",nextCycle)
+        if(labelsigno == false){
+
+            nextCycle = nextCycle + (saltobranch-2);
+        }
         
 
       }else{

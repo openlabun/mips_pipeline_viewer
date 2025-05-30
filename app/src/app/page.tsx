@@ -45,7 +45,7 @@ export default function Home() {
         {/* Añadido branch skip */}
         <div className='flex items-center space-x-2'>
           <div className='w-3 h-3 bg-pink-500 rounded-full'></div>
-          <span>Branch Skip</span>
+          <span>Branch Skip (Assumes not Taken)</span>
         </div>
       </div>
     </header>
