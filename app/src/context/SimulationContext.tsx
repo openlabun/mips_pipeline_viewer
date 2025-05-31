@@ -45,6 +45,11 @@ interface ForwardingInfo {
   register: string;
 }
 
+interface BranchPredictionEntry {
+  currentBit: boolean;
+  missStreak: number;
+}
+
 interface SimulationState {
   instructions: string[];
   currentCycle: number;
@@ -63,6 +68,15 @@ interface SimulationState {
 
   forwardingEnabled: boolean;
   stallsEnabled: boolean; // Add this new option
+  registerFile: number[]; // Add register file state
+
+  memory: Record<number, number>; // Add memory state
+  branchMode: "ALWAYS_TAKEN" | "ALWAYS_NOT_TAKEN" | "STATE_MACHINE"; // Add branch prediction mode
+  initialPrediction: boolean; // Initial prediction state for branch instructions
+  failThreshold: number; // Threshold for branch prediction failure
+  branchPredictionState: Record<number, BranchPredictionEntry>; // Add branch prediction state
+  branchOutcome: Record<number, boolean>; // true = hit, false = miss
+  branchMissCount: number;
 }
 
 // Define the shape of the context actions
@@ -100,6 +114,15 @@ const initialState: SimulationState = {
   currentStallCycles: 0,
   forwardingEnabled: true,
   stallsEnabled: true, // Add this new option
+
+  registerFile: Array(32).fill(0),
+  memory: {}, // Simulated memory, initially empty
+  branchMode: "ALWAYS_NOT_TAKEN", // Default branch prediction mode
+  initialPrediction: false, // false (Not Taken) by default
+  failThreshold: 1,
+  branchPredictionState: {},
+  branchOutcome: {}, // true = hit, false = miss
+  branchMissCount: 0,
 };
 
 const parseInstruction = (hexInstruction: string): RegisterUsage => {
@@ -431,7 +454,7 @@ export function SimulationProvider({ children }: PropsWithChildren) {
         }
       });
 
-      setSimulationState({
+      setSimulationState((prev) => ({
         instructions: submittedInstructions,
         currentCycle: 1,
         maxCycles: calculatedMaxCycles,
@@ -444,9 +467,23 @@ export function SimulationProvider({ children }: PropsWithChildren) {
         forwardings,
         stalls,
         currentStallCycles: 0,
-        forwardingEnabled: simulationState.forwardingEnabled,
-        stallsEnabled: simulationState.stallsEnabled,
-      });
+        forwardingEnabled: prev.forwardingEnabled,
+        stallsEnabled: prev.stallsEnabled,
+
+        // Memory and register file initialization
+        registerFile: Array(32).fill(0),
+        memory: {},
+
+        // Branch prediction settings
+        branchMode: prev.branchMode,
+        initialPrediction: prev.initialPrediction,
+        failThreshold: prev.failThreshold,
+
+        // Branch prediction state
+        branchPredictionState: {},
+        branchOutcome: {},
+        branchMissCount: 0,
+      }));
     },
     [
       resetSimulation,
