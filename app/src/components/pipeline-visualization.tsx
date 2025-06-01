@@ -1,5 +1,6 @@
 'use client';
-
+import { alarma } from '@/context/SimulationContext';
+import { saltables } from './instruction-input';
 import type * as React from 'react';
 import {
   Table,
@@ -23,6 +24,9 @@ import {
 import { cn } from '@/lib/utils';
 import { useSimulationState } from '@/context/SimulationContext';
 import { Badge } from '@/components/ui/badge';
+import { misses } from '@/context/SimulationContext';
+import { cambioboton } from './instruction-input';
+import { cambioboton2 } from '@/context/SimulationContext';
 
 const STAGES = [
   { name: 'IF', icon: Download },
@@ -32,8 +36,9 @@ const STAGES = [
   { name: 'WB', icon: CheckSquare },
 ] as const;
 
+
 export function PipelineVisualization() {
-  // Get state from context
+
   const {
     instructions,
     currentCycle: cycle,
@@ -156,18 +161,22 @@ export function PipelineVisualization() {
   };
 
   return (
-    <Card className='w-full overflow-hidden'>
-      <CardHeader>
-        <CardTitle>
-          Pipeline Progress
-          {!stallsEnabled && (
-            <span className='ml-2 text-sm font-normal text-muted-foreground'>
-              (Ideal Pipeline - No Hazard Detection)
-            </span>
-          )}
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
+<Card className='w-full overflow-hidden'>
+  <CardHeader>
+    <CardTitle>
+      Pipeline Progress
+      {!stallsEnabled && (
+        <span className='ml-2 text-sm font-normal text-muted-foreground'>
+          (Ideal Pipeline - No Hazard Detection)
+        </span>
+      )}
+      {/* Mostrar misses aquí */}
+      <span className="ml-6 text-sm font-semibold text-pink-600">
+        Branch Misses: {misses}
+      </span>
+    </CardTitle>
+  </CardHeader>
+  <CardContent>
         <div className='overflow-x-auto'>
           <Table className='min-w-max'>
             <TableCaption>
@@ -301,46 +310,62 @@ export function PipelineVisualization() {
                         : '';
 
                     return (
-                      <TableCell
-                        key={`inst-${instIndex}-cycle-${c}`}
-                        className={cn(
-                          'text-center w-16 h-14 transition-colors duration-300',
-                          cellStyle,
-                          isActiveColumn ? highlightClass : '',
-                          animationClass
-                        )}
-                      >
-                        {/* Stall indicator */}
-                        {cellState.type === 'stall' && (
-                          <div className='flex flex-col items-center justify-center'>
-                            <AlertTriangle className='w-4 h-4 mb-1 text-red-500' />
-                            <span className='text-xs font-semibold'>STALL</span>
-                          </div>
-                        )}
+<TableCell
+  key={`inst-${instIndex}-cycle-${c}`}
+  className={cn(
+    'text-center w-16 h-14 p-0 transition-colors duration-300',
+    cellStyle,
+    isActiveColumn ? highlightClass : '',
+    animationClass,
+    alarma === true &&
+      saltables[instIndex] &&
+      cellState.stage &&
+      ['ID', 'MEM', 'EX', 'IF', 'WB'].includes(cellState.stage.name) && cambioboton2 == true &&
+      'bg-pink-300 text-black border border-pink-500 animate-pulse-bg'
+  )}
+>
+  {/* Stall indicator */}
+  {cellState.type === 'stall' && (
+    <div className='flex flex-col items-center justify-center'>
+      <AlertTriangle className='w-4 h-4 mb-1 text-red-500' />
+      <span className='text-xs font-semibold'>STALL</span>
+    </div>
+  )}
 
-                        {/* Normal stage indicator */}
-                        {cellState.type === 'normal' && cellState.stage && (
-                          <div className='flex flex-col items-center justify-center'>
-                            <cellState.stage.icon className='w-4 h-4 mb-1' />
-                            <span className='text-xs'>
-                              {cellState.stage.name}
-                            </span>
-                          </div>
-                        )}
+  {/* Normal stage indicator */}
+  {cellState.type === 'normal' && cellState.stage && (
+    <div className='flex flex-col items-center justify-center'>
+      <cellState.stage.icon className='w-4 h-4 mb-1' />
+      <span className='text-xs'>{cellState.stage.name}</span>
+    </div>
+  )}
 
-                        {/* Forwarding indicator */}
-                        {cellState.type === 'forwarding' && cellState.stage && (
-                          <div className='flex flex-col items-center justify-center'>
-                            <div className='flex items-center justify-center mb-1 gap-1'>
-                              <cellState.stage.icon className='w-4 h-4' />
-                              <Zap className='w-3 h-3 text-green-500' />
-                            </div>
-                            <span className='text-xs'>
-                              {cellState.stage.name}
-                            </span>
-                          </div>
-                        )}
-                      </TableCell>
+  {/* Forwarding indicator */}
+  {cellState.type === 'forwarding' && cellState.stage && (
+    <div className='flex flex-col items-center justify-center'>
+      <div className='flex items-center justify-center mb-1 gap-1'>
+        <cellState.stage.icon className='w-4 h-4' />
+        <Zap className='w-3 h-3 text-green-500' />
+      </div>
+      <span className='text-xs'>{cellState.stage.name}</span>
+    </div>
+  )}
+  
+
+  {/* Branch-skipped indicator */}
+{cambioboton2 == true && alarma === true &&
+  saltables[instIndex] &&
+  cellState.stage &&
+  ['ID', 'MEM', 'EX', 'IF', 'WB'].includes(cellState.stage.name) && (
+    <div>
+      <span className="text-[10px] font-semibold leading-tight">SKIPPED</span>
+    </div>
+)}
+
+</TableCell>
+
+
+
                     );
                   })}
                 </TableRow>
@@ -349,29 +374,34 @@ export function PipelineVisualization() {
           </Table>
         </div>
 
-        {/* Legend */}
-        <div className='flex flex-wrap gap-4 mt-4 text-sm'>
-          <div className='flex items-center'>
-            <div className='w-4 h-4 bg-accent mr-2 rounded-sm'></div>
-            <span>Current Stage</span>
-          </div>
-          <div className='flex items-center'>
-            <div className='w-4 h-4 bg-secondary mr-2 rounded-sm'></div>
-            <span>Completed Stage</span>
-          </div>
-          {stallsEnabled && (
-            <>
-              <div className='flex items-center'>
-                <div className='w-4 h-4 bg-red-100 dark:bg-red-900/30 mr-2 rounded-sm'></div>
-                <span>Stall</span>
-              </div>
-              <div className='flex items-center'>
-                <div className='w-4 h-4 bg-green-100 dark:bg-green-900/30 mr-2 rounded-sm'></div>
-                <span>Forwarding</span>
-              </div>
-            </>
-          )}
-        </div>
+<div className='flex flex-wrap gap-4 mt-4 text-sm'>
+  <div className='flex items-center'>
+    <div className='w-4 h-4 bg-accent mr-2 rounded-sm'></div>
+    <span>Current Stage</span>
+  </div>
+  <div className='flex items-center'>
+    <div className='w-4 h-4 bg-secondary mr-2 rounded-sm'></div>
+    <span>Completed Stage</span>
+  </div>
+  {stallsEnabled && (
+    <>
+      <div className='flex items-center'>
+        <div className='w-4 h-4 bg-red-100 dark:bg-red-900/30 mr-2 rounded-sm'></div>
+        <span>Stall</span>
+      </div>
+      <div className='flex items-center'>
+        <div className='w-4 h-4 bg-green-100 dark:bg-green-900/30 mr-2 rounded-sm'></div>
+        <span>Forwarding</span>
+      </div>
+    </>
+  )}
+  {/* Aquí agregamos Branch Skip */}
+  <div className='flex items-center'>
+    <div className='w-4 h-4 bg-pink-100 dark:bg-pink-900/30 mr-2 rounded-sm'></div>
+    <span>Branch Skip</span>
+  </div> 
+</div>
+
       </CardContent>
     </Card>
   );
