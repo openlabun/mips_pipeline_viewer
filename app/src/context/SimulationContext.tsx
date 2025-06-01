@@ -26,7 +26,6 @@ let branch: boolean;
 let cambioboton2: boolean = true;
 
 
-console.log("xd",cambioboton2)
 
 // Define the stage names (optional, but good for clarity)
 const STAGE_NAMES = ["IF", "ID", "EX", "MEM", "WB"] as const;
