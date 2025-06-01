@@ -91,7 +91,12 @@ interface SimulationActions {
   pauseSimulation: () => void;
   resumeSimulation: () => void;
   setForwardingEnabled: (enabled: boolean) => void;
-  setStallsEnabled: (enabled: boolean) => void; // Add this new action
+  setStallsEnabled: (enabled: boolean) => void;
+  setBranchMode: (mode: SimulationState["branchMode"]) => void;
+  setStateMachineConfig: (
+    initialPrediction: boolean,
+    failThreshold: number
+  ) => void;
 }
 
 // Create the contexts
@@ -371,7 +376,7 @@ function handleBranchAtID(
     } else if (state.branchMode === "ALWAYS_NOT_TAKEN") {
       predictedTaken = false;
     } else {
-      // STATE_MACHINE
+      // MOOD STATE_MACHINE
       const prevEntry = state.branchPredictionState[idx] ?? {
         currentBit: state.initialPrediction,
         missStreak: 0,
@@ -394,6 +399,7 @@ function handleBranchAtID(
     // 3) Compare prediction vs reality
     const wasCorrect = predictedTaken === isTakenReal;
     newBranchOutcome[idx] = wasCorrect;
+
     if (!wasCorrect) {
       branchMissCountRef.value += 1;
     }
@@ -405,9 +411,11 @@ function handleBranchAtID(
         missStreak: 0,
       };
 
+      let newMissStreak = prevEntry.missStreak;
+
       if (!wasCorrect) {
         // Prediction failed: we increased missStreak
-        const newMissStreak = prevEntry.missStreak + 1;
+        newMissStreak = prevEntry.missStreak + 1;
         if (newMissStreak >= state.failThreshold) {
           // If it reached the threshold, we invert the bit and reset missStreak
           newBranchPredictionState[idx] = {
@@ -767,6 +775,30 @@ export function SimulationProvider({ children }: PropsWithChildren) {
     });
   };
 
+  const setBranchMode = useCallback((mode: SimulationState["branchMode"]) => {
+    setSimulationState((prevState) => ({
+      ...prevState,
+      branchMode: mode,
+      branchPredictionState: {},
+      branchOutcome: {},
+      branchMissCount: 0,
+    }));
+  }, []);
+
+  const setStateMachineConfig = useCallback(
+    (initialPrediction: boolean, failThreshold: number) => {
+      setSimulationState((prevState) => ({
+        ...prevState,
+        initialPrediction,
+        failThreshold,
+        branchPredictionState: {},
+        branchOutcome: {},
+        branchMissCount: 0,
+      }));
+    },
+    []
+  );
+
   useEffect(() => {
     if (simulationState.isRunning && !simulationState.isFinished) {
       runClock();
@@ -776,9 +808,6 @@ export function SimulationProvider({ children }: PropsWithChildren) {
     return clearTimer;
   }, [simulationState.isRunning, simulationState.isFinished, runClock]);
 
-  // State value derived directly from simulationState
-  const stateValue: SimulationState = simulationState;
-
   const actionsValue: SimulationActions = useMemo(
     () => ({
       startSimulation,
@@ -787,9 +816,23 @@ export function SimulationProvider({ children }: PropsWithChildren) {
       resumeSimulation,
       setForwardingEnabled,
       setStallsEnabled,
+      setBranchMode,
+      setStateMachineConfig,
     }),
-    [startSimulation, resetSimulation]
+    [
+      startSimulation,
+      resetSimulation,
+      pauseSimulation,
+      resumeSimulation,
+      setForwardingEnabled,
+      setStallsEnabled,
+      setBranchMode,
+      setStateMachineConfig,
+    ]
   );
+
+  // State value derived directly from simulationState
+  const stateValue: SimulationState = simulationState;
 
   return (
     <SimulationStateContext.Provider value={stateValue}>
