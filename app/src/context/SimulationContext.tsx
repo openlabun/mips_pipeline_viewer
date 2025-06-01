@@ -28,6 +28,7 @@ interface RegisterUsage {
   funct: number;
   type: InstructionType;
   isLoad: boolean; // Add this to detect load instructions
+  immediate?: number; // Immediate value for I-type instructions
 }
 
 interface HazardInfo {
@@ -71,6 +72,10 @@ interface SimulationState {
   registerFile: number[]; // Add register file state
 
   memory: Record<number, number>; // Add memory state
+
+  aluResults: Record<number, number>;
+  loadedFromMem: Record<number, number>;
+
   branchMode: "ALWAYS_TAKEN" | "ALWAYS_NOT_TAKEN" | "STATE_MACHINE"; // Add branch prediction mode
   initialPrediction: boolean; // Initial prediction state for branch instructions
   failThreshold: number; // Threshold for branch prediction failure
@@ -117,6 +122,9 @@ const initialState: SimulationState = {
 
   registerFile: Array(32).fill(0),
   memory: {}, // Simulated memory, initially empty
+  aluResults: {},
+  loadedFromMem: {},
+
   branchMode: "ALWAYS_NOT_TAKEN", // Default branch prediction mode
   initialPrediction: false, // false (Not Taken) by default
   failThreshold: 1,
@@ -136,6 +144,8 @@ const parseInstruction = (hexInstruction: string): RegisterUsage => {
   let funct = 0;
   let isLoad = false;
 
+  let immediate = 0;
+
   if (opcode === 0) {
     type = "R";
     rd = parseInt(binary.substring(16, 21), 2);
@@ -146,6 +156,16 @@ const parseInstruction = (hexInstruction: string): RegisterUsage => {
     funct = 0;
   } else {
     type = "I";
+
+    const immRaw = parseInt(binary.substring(16, 32), 2);
+    if ((immRaw & (1 << 15)) !== 0) {
+      // Check if the sign bit (bit 15) is set
+      immediate = immRaw | 0xffff0000;
+    } else {
+      // If not, it's a positive immediate
+      immediate = immRaw;
+    }
+
     // Check for load instructions (lw = 35, lh = 33, lb = 32, etc.)
     if (opcode >= 32 && opcode <= 37) {
       rd = rt; // For loads, rt is the destination
@@ -157,7 +177,7 @@ const parseInstruction = (hexInstruction: string): RegisterUsage => {
     }
   }
 
-  return { rs, rt, rd, opcode, funct, type, isLoad };
+  return { rs, rt, rd, opcode, funct, type, isLoad, immediate };
 };
 
 const detectHazards = (
@@ -304,16 +324,139 @@ const calculatePrecedingStalls = (
   return totalStalls;
 };
 
+function handleWriteBack(idx: number, state: SimulationState) {
+  const usage = state.registerUsage[idx];
+  const opcode = usage.opcode;
+  const type = usage.type;
+
+  // 1) R-type (ADD, SUB, etc.) → rd
+  if (type === "R" && usage.rd !== 0) {
+    const result = state.aluResults[idx] ?? 0;
+    state.registerFile[usage.rd] = result;
+  }
+  // 2) I-type (ADDI, ANDI, etc.) → rt
+  else if (type === "I" && opcode >= 8 && opcode <= 15) {
+    const result = state.aluResults[idx] ?? 0;
+    state.registerFile[usage.rt] = result;
+  }
+  // 3) LW (opcode 35) → rt
+  else if (type === "I" && opcode === 35) {
+    const loaded = state.loadedFromMem[idx] ?? 0;
+    state.registerFile[usage.rt] = loaded;
+  }
+}
+
+function handleBranchAtID(
+  idx: number,
+  state: {
+    registerUsage: Record<number, RegisterUsage>;
+    registerFile: number[];
+    branchMode: SimulationState["branchMode"];
+    initialPrediction: boolean;
+    failThreshold: number;
+    branchPredictionState: Record<number, BranchPredictionEntry>;
+    branchOutcome: Record<number, boolean>;
+  },
+  newBranchPredictionState: Record<number, BranchPredictionEntry>,
+  newBranchOutcome: Record<number, boolean>,
+  branchMissCountRef: { value: number }
+) {
+  const usage = state.registerUsage[idx];
+  // BEQ (opcode 4) and BNE (opcode 5) are the only branch instructions
+  if (usage.type === "I" && (usage.opcode === 4 || usage.opcode === 5)) {
+    // 1) Determine the prediction (predictedTaken)
+    let predictedTaken: boolean;
+    if (state.branchMode === "ALWAYS_TAKEN") {
+      predictedTaken = true;
+    } else if (state.branchMode === "ALWAYS_NOT_TAKEN") {
+      predictedTaken = false;
+    } else {
+      // STATE_MACHINE
+      const prevEntry = state.branchPredictionState[idx] ?? {
+        currentBit: state.initialPrediction,
+        missStreak: 0,
+      };
+      predictedTaken = prevEntry.currentBit;
+    }
+
+    // 2) Calculate ‘realTaken’ using registerFile[rs] and registerFile[rt]
+    const rsVal = state.registerFile[usage.rs];
+    const rtVal = state.registerFile[usage.rt];
+    let isTakenReal: boolean;
+    if (usage.opcode === 4) {
+      // BEQ: taken if rsVal === rtVal
+      isTakenReal = rsVal === rtVal;
+    } else {
+      // BNE: taken if rsVal !== rtVal
+      isTakenReal = rsVal !== rtVal;
+    }
+
+    // 3) Compare prediction vs reality
+    const wasCorrect = predictedTaken === isTakenReal;
+    newBranchOutcome[idx] = wasCorrect;
+    if (!wasCorrect) {
+      branchMissCountRef.value += 1;
+    }
+
+    // 4) In STATE_MACHINE, update the fault counter and bit
+    if (state.branchMode === "STATE_MACHINE") {
+      const prevEntry = state.branchPredictionState[idx] ?? {
+        currentBit: state.initialPrediction,
+        missStreak: 0,
+      };
+
+      if (!wasCorrect) {
+        // Prediction failed: we increased missStreak
+        const newMissStreak = prevEntry.missStreak + 1;
+        if (newMissStreak >= state.failThreshold) {
+          // If it reached the threshold, we invert the bit and reset missStreak
+          newBranchPredictionState[idx] = {
+            currentBit: !prevEntry.currentBit,
+            missStreak: 0,
+          };
+        } else {
+          // We increase the streak, but do not change the bit
+          newBranchPredictionState[idx] = {
+            currentBit: prevEntry.currentBit,
+            missStreak: newMissStreak,
+          };
+        }
+      } else {
+        // Correct prediction: reset missStreak, keep the bit
+        newBranchPredictionState[idx] = {
+          currentBit: prevEntry.currentBit,
+          missStreak: 0,
+        };
+      }
+    }
+  }
+}
+
 const calculateNextState = (currentState: SimulationState): SimulationState => {
   if (!currentState.isRunning || currentState.isFinished) {
     return currentState;
   }
 
   const nextCycle = currentState.currentCycle + 1;
-  const newInstructionStages: Record<number, number | null> = {};
-  let activeInstructions = 0;
+
+  const newInstructionStages: Record<number, number | null> = {
+    ...currentState.instructionStages,
+  };
+  const newRegisterFile = [...currentState.registerFile];
+  const newMemory = { ...currentState.memory };
+  const newAluResults = { ...currentState.aluResults };
+  const newLoadedFromMem = { ...currentState.loadedFromMem };
+
+  const newBranchPredictionState: Record<number, BranchPredictionEntry> = {
+    ...currentState.branchPredictionState,
+  };
+  const newBranchOutcome: Record<number, boolean> = {
+    ...currentState.branchOutcome,
+  };
+  const branchMissCountRef = { value: currentState.branchMissCount };
 
   let newStallCycles = currentState.currentStallCycles;
+
   if (newStallCycles > 0) {
     newStallCycles--;
     return {
@@ -325,30 +468,117 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
   }
 
   let totalStallCycles = 0;
-  Object.values(currentState.stalls).forEach((stalls) => {
-    totalStallCycles += stalls;
+  Object.values(currentState.stalls).forEach((s) => {
+    totalStallCycles += s;
   });
 
-  currentState.instructions.forEach((_, index) => {
-    const precedingStalls = calculatePrecedingStalls(
-      currentState.stalls,
-      index
-    );
-    const stageIndex = nextCycle - index - 1 - precedingStalls;
+  currentState.instructions.forEach((_, idx) => {
+    const prevStage = currentState.instructionStages[idx] ?? -1;
+    const precedingStalls = calculatePrecedingStalls(currentState.stalls, idx);
+    const stageIndex = nextCycle - idx - 1 - precedingStalls;
 
-    if (stageIndex >= 0 && stageIndex < currentState.stageCount) {
-      newInstructionStages[index] = stageIndex;
-      activeInstructions++;
+    const isActive = stageIndex >= 0 && stageIndex < currentState.stageCount;
+    const newStage = isActive ? stageIndex : null;
+    newInstructionStages[idx] = newStage;
 
-      if (
-        stageIndex === 1 &&
-        currentState.stalls[index] > 0 &&
-        newStallCycles === 0
-      ) {
-        newStallCycles = currentState.stalls[index];
+    // Constants for stage indices
+    const ID_STAGE = 1;
+    const EX_STAGE = 2;
+    const MEM_STAGE = 3;
+    const WB_STAGE = 4;
+
+    // WB_STAGE is the last stage, so we handle it first
+    if (newStage === WB_STAGE && (prevStage === null || prevStage < WB_STAGE)) {
+      handleWriteBack(idx, {
+        ...currentState,
+        registerFile: newRegisterFile,
+        aluResults: newAluResults,
+        loadedFromMem: newLoadedFromMem,
+      });
+    }
+
+    // MEM_STAGE is before WB_STAGE, so we handle it next
+    if (
+      newStage === MEM_STAGE &&
+      (prevStage === null || prevStage < MEM_STAGE)
+    ) {
+      // Handle memory operations (load/store)
+      const usage = currentState.registerUsage[idx];
+      if (usage.type === "I" && usage.opcode === 35) {
+        // Load instruction
+        const address = newAluResults[idx] ?? 0; // Use ALU result as address
+        const wordIndex = address / 4;
+        const value = currentState.memory[wordIndex] ?? 0;
+        newLoadedFromMem[idx] = value;
+      } else if (usage.type === "I" && usage.opcode === 43) {
+        // Store instruction
+        const address = newAluResults[idx] ?? 0;
+        const wordIndex = address / 4;
+        const rtVal = newRegisterFile[usage.rt];
+        newMemory[wordIndex] = rtVal;
       }
-    } else {
-      newInstructionStages[index] = null;
+    }
+
+    // EX_STAGE is before MEM_STAGE
+    if (newStage === EX_STAGE && (prevStage === null || prevStage < EX_STAGE)) {
+      const usage = currentState.registerUsage[idx];
+      if (usage.type === "R") {
+        // R-type instruction: perform ALU operation
+        const rsVal = newRegisterFile[usage.rs];
+        const rtVal = newRegisterFile[usage.rt];
+        let result = 0;
+        switch (usage.funct) {
+          case 32: // ADD
+            result = rsVal + rtVal;
+            break;
+          case 34: // SUB
+            result = rsVal - rtVal;
+            break;
+          case 36: // AND
+            result = rsVal & rtVal;
+            break;
+          case 37: // OR
+            result = rsVal | rtVal;
+            break;
+          case 42: // SLT
+            result = rsVal < rtVal ? 1 : 0;
+            break;
+        }
+        newAluResults[idx] = result;
+      } else if (usage.type === "I") {
+        const rsVal = newRegisterFile[usage.rs];
+        const imm = usage.immediate ?? 0;
+        if (usage.opcode >= 8 && usage.opcode <= 15) {
+          // I-type arithmetic (ADDI, ANDI, etc.)
+          newAluResults[idx] = rsVal + imm;
+        } else if (usage.opcode === 35 || usage.opcode === 43) {
+          // Load/Store instructions
+          newAluResults[idx] = rsVal + imm;
+        }
+      }
+    }
+
+    // ID_STAGE is before EX_STAGE
+    if (newStage === ID_STAGE && (prevStage === null || prevStage < ID_STAGE)) {
+      handleBranchAtID(
+        idx,
+        {
+          registerUsage: currentState.registerUsage,
+          registerFile: newRegisterFile,
+          branchMode: currentState.branchMode,
+          initialPrediction: currentState.initialPrediction,
+          failThreshold: currentState.failThreshold,
+          branchPredictionState: currentState.branchPredictionState,
+          branchOutcome: currentState.branchOutcome,
+        },
+        newBranchPredictionState,
+        newBranchOutcome,
+        branchMissCountRef
+      );
+    }
+
+    if (isActive && currentState.stalls[idx] > 0 && newStallCycles === 0) {
+      newStallCycles = currentState.stalls[idx];
     }
   });
 
@@ -367,9 +597,16 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
     ...currentState,
     currentCycle: isFinished ? completionCycle : nextCycle,
     instructionStages: newInstructionStages,
-    isRunning: isRunning,
-    isFinished: isFinished,
+    isRunning,
+    isFinished,
     currentStallCycles: newStallCycles,
+    registerFile: newRegisterFile,
+    memory: newMemory,
+    aluResults: newAluResults,
+    loadedFromMem: newLoadedFromMem,
+    branchPredictionState: newBranchPredictionState,
+    branchOutcome: newBranchOutcome,
+    branchMissCount: branchMissCountRef.value,
   };
 };
 
@@ -473,6 +710,9 @@ export function SimulationProvider({ children }: PropsWithChildren) {
         // Memory and register file initialization
         registerFile: Array(32).fill(0),
         memory: {},
+
+        aluResults: {},
+        loadedFromMem: {},
 
         // Branch prediction settings
         branchMode: prev.branchMode,
