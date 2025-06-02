@@ -1,4 +1,5 @@
-"use client"; // Add 'use client' directive
+// src/context/SimulationContext.tsx
+"use client";
 
 import {
   createContext,
@@ -11,13 +12,14 @@ import {
   type PropsWithChildren,
 } from "react";
 import * as React from "react";
+import { translateInstructionToMIPS } from "./Converter"; // Asumo que Converter.ts está en el mismo directorio o ajusta la ruta
 
-// Define the stage names (optional, but good for clarity)
+// Define the stage names
 const STAGE_NAMES = ["IF", "ID", "EX", "MEM", "WB"] as const;
 type StageName = (typeof STAGE_NAMES)[number];
 
 type InstructionType = "R" | "I" | "J";
-type HazardType = "RAW" | "WAW" | "NONE"; // Could add "Control" for branch mispredicts
+type HazardType = "RAW" | "WAW" | "NONE"; // Podrías añadir "Control" para predicciones erróneas
 
 interface RegisterUsage {
   rs: number;
@@ -27,8 +29,9 @@ interface RegisterUsage {
   funct: number;
   type: InstructionType;
   isLoad: boolean;
-  isBranch?: boolean; // Helpful for branch logic
-  branchTarget?: number; // For branch instructions
+  isStore: boolean;
+  isBranch?: boolean; // Añadido para identificar instrucciones de salto condicional
+  // branchTarget?: number; // Podrías calcular y almacenar el objetivo del salto aquí
 }
 
 interface HazardInfo {
@@ -46,10 +49,32 @@ interface ForwardingInfo {
   register: string;
 }
 
-// Branch Prediction Types
+// Tipos para la Predicción de Saltos
 export type BranchPredictionMode = "none" | "static" | "stateMachine";
 export type StaticBranchPrediction = "taken" | "notTaken";
 export type StateMachineInitialPrediction = "taken" | "notTaken";
+
+// Mapeo de registros
+const regMap: { [key: string]: string } = {
+  "0": "zero", "1": "at", "2": "v0", "3": "v1", "4": "a0", "5": "a1", "6": "a2", "7": "a3",
+  "8": "t0", "9": "t1", "10": "t2", "11": "t3", "12": "t4", "13": "t5", "14": "t6", "15": "t7",
+  "16": "s0", "17": "s1", "18": "s2", "19": "s3", "20": "s4", "21": "s5", "22": "s6", "23": "s7",
+  "24": "t8", "25": "t9", "26": "k0", "27": "k1", "28": "gp", "29": "sp", "30": "fp", "31": "ra",
+};
+
+const initialRegisters: Record<string, number> = Object.values(regMap).reduce((acc, val) => {
+  acc[`$${val}`] = 0;
+  return acc;
+}, {} as Record<string, number>);
+initialRegisters["$sp"] = 28; // Ejemplo de inicialización de SP, ajusta según sea necesario
+
+const initialMemory = Array.from({ length: 32 }).reduce<Record<number, number>>(
+  (acc, _, i) => {
+    acc[i] = 0;
+    return acc;
+  },
+  {} as Record<number, number>
+);
 
 interface SimulationState {
   instructions: string[];
@@ -59,22 +84,23 @@ interface SimulationState {
   stageCount: number;
   instructionStages: Record<number, number | null>;
   isFinished: boolean;
-
   registerUsage: Record<number, RegisterUsage>;
   hazards: Record<number, HazardInfo>;
   forwardings: Record<number, ForwardingInfo[]>;
-  stalls: Record<number, number>; // Stalls per instruction (e.g. due to data hazard)
-
-  currentStallCycles: number; // Global stall cycles being processed
-
+  stalls: Record<number, number>;
+  currentStallCycles: number;
   forwardingEnabled: boolean;
   stallsEnabled: boolean;
+  registers: Record<string, number>;
+  memory: Record<number, number>;
+  PC: number; // Program Counter (índice de la instrucción actual en `instructions`)
 
-  // Branch Prediction State
+  // Estado de Predicción de Saltos
   branchPredictionMode: BranchPredictionMode;
   staticBranchPrediction: StaticBranchPrediction;
   stateMachineInitialPrediction: StateMachineInitialPrediction;
   stateMachineFailsToSwitch: number;
+  // Aquí podrías añadir estados para predictores dinámicos (tablas de historia, etc.)
 }
 
 interface SimulationActions {
@@ -85,21 +111,15 @@ interface SimulationActions {
   setForwardingEnabled: (enabled: boolean) => void;
   setStallsEnabled: (enabled: boolean) => void;
 
-  // Branch Prediction Actions
+  // Acciones de Predicción de Saltos
   setBranchPredictionMode: (mode: BranchPredictionMode) => void;
   setStaticBranchPrediction: (prediction: StaticBranchPrediction) => void;
-  setStateMachineInitialPrediction: (
-    prediction: StateMachineInitialPrediction
-  ) => void;
+  setStateMachineInitialPrediction: (prediction: StateMachineInitialPrediction) => void;
   setStateMachineFailsToSwitch: (fails: number) => void;
 }
 
-const SimulationStateContext = createContext<SimulationState | undefined>(
-  undefined
-);
-const SimulationActionsContext = createContext<SimulationActions | undefined>(
-  undefined
-);
+const SimulationStateContext = createContext<SimulationState | undefined>(undefined);
+const SimulationActionsContext = createContext<SimulationActions | undefined>(undefined);
 
 const DEFAULT_STAGE_COUNT = STAGE_NAMES.length;
 
@@ -118,12 +138,15 @@ const initialState: SimulationState = {
   currentStallCycles: 0,
   forwardingEnabled: true,
   stallsEnabled: true,
+  registers: { ...initialRegisters }, // Copia para evitar mutaciones
+  memory: { ...initialMemory },     // Copia para evitar mutaciones
+  PC: 0,
 
-  // Branch Prediction Initial State
+  // Estado Inicial de Predicción de Saltos
   branchPredictionMode: "none",
   staticBranchPrediction: "notTaken",
   stateMachineInitialPrediction: "notTaken",
-  stateMachineFailsToSwitch: 2,
+  stateMachineFailsToSwitch: 2, // Ej: para un contador saturante de 2 bits
 };
 
 const parseInstruction = (hexInstruction: string): RegisterUsage => {
@@ -131,13 +154,13 @@ const parseInstruction = (hexInstruction: string): RegisterUsage => {
   const opcode = parseInt(binary.substring(0, 6), 2);
   const rs = parseInt(binary.substring(6, 11), 2);
   const rt = parseInt(binary.substring(11, 16), 2);
-  // const imm = parseInt(binary.substring(16, 32), 2); // For branches, etc.
 
   let type: InstructionType = "R";
   let rd = 0;
   let funct = 0;
   let isLoad = false;
-  let isBranch = false;
+  let isStore = false;
+  let isBranch = false; // Añadido
 
   if (opcode === 0) { // R-type
     type = "R";
@@ -145,34 +168,372 @@ const parseInstruction = (hexInstruction: string): RegisterUsage => {
     funct = parseInt(binary.substring(26, 32), 2);
   } else if (opcode === 2 || opcode === 3) { // J-type (j, jal)
     type = "J";
-    rd = opcode === 3 ? 31 : 0; // jal writes to $ra
-  } else if (opcode === 4 || opcode === 5) { // I-type Branches (beq, bne)
+    rd = opcode === 3 ? 31 : 0; // jal escribe en $ra
+  } else if (opcode === 4 || opcode === 5) { // Saltos condicionales I-type (beq, bne)
     type = "I";
     isBranch = true;
-    // rd is not used as a destination for beq/bne traditionally
-  } else { // Other I-types
+    // rd no se usa como destino para beq/bne
+  } else { // Otros I-type
     type = "I";
-    if (opcode >= 32 && opcode <= 37) { // Loads (lw, lh, lb, etc.)
+    // Opcodes de carga: lb(32), lh(33), lw(35), lbu(36), lhu(37), ll(48)
+    if ([32, 33, 35, 36, 37, 48].includes(opcode)) {
       isLoad = true;
-      rd = rt;
-    } else if (opcode >= 8 && opcode <= 15) { // Immediate arithmetic (addi, addiu, etc.)
-      rd = rt;
-    } else if (opcode >= 40 && opcode <= 43) { // Stores (sw, sh, sb)
+      rd = rt; // rt es el destino para cargas
+    }
+    // Opcodes de almacenamiento: sb(40), sh(41), sw(43), sc(56)
+    else if ([40, 41, 43, 56].includes(opcode)) {
+      isStore = true;
+      // rd no es destino, rt es fuente
       rd = 0;
+    }
+    // Opcodes aritméticos inmediatos que escriben en rt: addi(8), addiu(9), andi(12), ori(13), xori(14), slti(10), sltiu(11)
+    // Nota: Tu lista original era [8, 9, 12, 13, 14, 15], donde 15 es LUI.
+    // Y slti/sltiu usan opcodes 10 y 11, no 14 y 15.
+    else if ([8, 9, 10, 11, 12, 13, 14].includes(opcode)) { // addi, addiu, slti, sltiu, andi, ori, xori
+      rd = rt; // rt es el destino
+    }
+    // LUI (opcode 15)
+    else if (opcode === 15) { // lui
+      rd = rt; // rt es el destino
     } else {
-      rd = rt; // Default assumption for other I-types, might need refinement
+      // Otros I-type pueden no tener rd o usarlo de forma diferente.
+      // Por simplicidad, si no es carga, almacén, aritmético-imm conocido o lui.
+      rd = 0; // O podría ser rt si es un tipo de instrucción que no has cubierto.
     }
   }
-  return { rs, rt, rd, opcode, funct, type, isLoad, isBranch };
+
+  return { rs, rt, rd, opcode, funct, type, isLoad, isStore, isBranch };
 };
 
-// Corrected detectHazards signature and usage
+
+const normalizeRegister = (reg: string): string => {
+  reg = reg.toLowerCase().trim();
+  if (reg.startsWith('$')) {
+    return reg;
+  }
+  return `$${reg}`;
+};
+
+const executeMIPSInstruction = (
+  hexInstruction: string,
+  registers: Record<string, number>,
+  memory: Record<number, number>,
+  PC: number, // PC actual (índice de la instrucción)
+  stage: StageName,
+  forwardings: ForwardingInfo[],
+  currentCycle: number,
+  isForwardingEnabled: boolean // Necesario para decidir si usar valores forwardeados
+): { updatedRegisters: Record<string, number>, updatedMemory: Record<string, number>, nextPC?: number } => {
+  const mipsInstruction = translateInstructionToMIPS(hexInstruction);
+  // console.log(`Cycle ${currentCycle} - ${stage} - Executing: ${hexInstruction} (${mipsInstruction}), PC: ${PC}`);
+
+  const [op, ...operands] = mipsInstruction.replace(/,/g, "").split(" ");
+  let newPC: number | undefined = undefined; // Por defecto, PC avanza secuencialmente
+  let tempRegisters = { ...registers };
+  let tempMemory = { ...memory };
+
+  const getRegName = (regNum: number) => `$${regMap[regNum.toString()] || `r${regNum}`}`;
+
+  const getRegisterValueConsideringForwarding = (regNumStr: string, currentStage: StageName): number => {
+    const regName = normalizeRegister(regNumStr);
+    if (isForwardingEnabled) {
+      const activeForwarding = forwardings.find(f =>
+          f.register === regName &&
+          // Lógica de forwarding: EX/MEM -> EX, MEM/WB -> EX, MEM/WB -> MEM
+          // Esto es una simplificación. El forwarding real es más complejo.
+          // Aquí asumimos que si hay un forwarding a la etapa actual, el valor ya está disponible.
+          // En una simulación más detallada, se verificaría la etapa de origen del forwarding.
+          ( (currentStage === "EX" && (f.fromStage === "EX" || f.fromStage === "MEM")) ||
+            (currentStage === "MEM" && (f.fromStage === "MEM" || f.fromStage === "WB")) ) // WB a MEM no es usual, pero EX a MEM sí
+      );
+      if (activeForwarding) {
+        // console.log(`Forwarding ${regName} from I${activeForwarding.from} (${activeForwarding.fromStage}) to ${currentStage} for I${PC}`);
+        // El valor forwardeado es el que ya estaría en el registro si la escritura anterior completó WB,
+        // o el resultado de EX/MEM si se forwardea desde esas etapas.
+        // Para simplificar, asumimos que `tempRegisters` ya tiene el valor correcto si el forwarding es de una etapa anterior
+        // que ya escribió (WB), o que `executeMIPSInstruction` en etapas previas (EX/MEM) ya actualizó `tempRegisters`
+        // con el resultado que se está forwardeando.
+        // Esta es una gran simplificación.
+        return tempRegisters[regName];
+      }
+    }
+    return tempRegisters[regName];
+  };
+
+
+  switch (stage) {
+    case "EX": {
+      switch (op) {
+        case "add": case "addu": {
+          const [rd, rs, rt] = operands.map(r => normalizeRegister(r));
+          const valRs = getRegisterValueConsideringForwarding(rs, "EX");
+          const valRt = getRegisterValueConsideringForwarding(rt, "EX");
+          tempRegisters[rd] = (valRs + valRt) | 0;
+          break;
+        }
+        case "sub": case "subu": {
+          const [rd, rs, rt] = operands.map(r => normalizeRegister(r));
+          const valRs = getRegisterValueConsideringForwarding(rs, "EX");
+          const valRt = getRegisterValueConsideringForwarding(rt, "EX");
+          tempRegisters[rd] = (valRs - valRt) | 0;
+          break;
+        }
+        case "and": {
+          const [rd, rs, rt] = operands.map(r => normalizeRegister(r));
+          const valRs = getRegisterValueConsideringForwarding(rs, "EX");
+          const valRt = getRegisterValueConsideringForwarding(rt, "EX");
+          tempRegisters[rd] = valRs & valRt;
+          break;
+        }
+        case "or": {
+          const [rd, rs, rt] = operands.map(r => normalizeRegister(r));
+          const valRs = getRegisterValueConsideringForwarding(rs, "EX");
+          const valRt = getRegisterValueConsideringForwarding(rt, "EX");
+          tempRegisters[rd] = valRs | valRt;
+          break;
+        }
+        case "xor": {
+          const [rd, rs, rt] = operands.map(r => normalizeRegister(r));
+          const valRs = getRegisterValueConsideringForwarding(rs, "EX");
+          const valRt = getRegisterValueConsideringForwarding(rt, "EX");
+          tempRegisters[rd] = valRs ^ valRt;
+          break;
+        }
+        case "nor": {
+          const [rd, rs, rt] = operands.map(r => normalizeRegister(r));
+          const valRs = getRegisterValueConsideringForwarding(rs, "EX");
+          const valRt = getRegisterValueConsideringForwarding(rt, "EX");
+          tempRegisters[rd] = ~(valRs | valRt);
+          break;
+        }
+        case "slt": {
+          const [rd, rs, rt] = operands.map(r => normalizeRegister(r));
+          const valRs = getRegisterValueConsideringForwarding(rs, "EX");
+          const valRt = getRegisterValueConsideringForwarding(rt, "EX");
+          tempRegisters[rd] = valRs < valRt ? 1 : 0;
+          break;
+        }
+        case "sltu": {
+          const [rd, rs, rt] = operands.map(r => normalizeRegister(r));
+          const valRs = getRegisterValueConsideringForwarding(rs, "EX") >>> 0;
+          const valRt = getRegisterValueConsideringForwarding(rt, "EX") >>> 0;
+          tempRegisters[rd] = valRs < valRt ? 1 : 0;
+          break;
+        }
+        case "sll": {
+          const [rd, rt, shamtStr] = operands.map(r => normalizeRegister(r));
+          const valRt = getRegisterValueConsideringForwarding(rt, "EX");
+          tempRegisters[rd] = valRt << parseInt(shamtStr);
+          break;
+        }
+        case "srl": {
+          const [rd, rt, shamtStr] = operands.map(r => normalizeRegister(r));
+          const valRt = getRegisterValueConsideringForwarding(rt, "EX");
+          tempRegisters[rd] = valRt >>> parseInt(shamtStr); // Logical shift
+          break;
+        }
+        case "sra": {
+          const [rd, rt, shamtStr] = operands.map(r => normalizeRegister(r));
+          const valRt = getRegisterValueConsideringForwarding(rt, "EX");
+          tempRegisters[rd] = valRt >> parseInt(shamtStr); // Arithmetic shift
+          break;
+        }
+        case "addi": case "addiu": {
+          const [rt, rs, immStr] = operands;
+          const normRt = normalizeRegister(rt);
+          const valRs = getRegisterValueConsideringForwarding(rs, "EX");
+          tempRegisters[normRt] = (valRs + parseInt(immStr)) | 0;
+          break;
+        }
+        case "andi": {
+          const [rt, rs, immStr] = operands;
+          const normRt = normalizeRegister(rt);
+          const valRs = getRegisterValueConsideringForwarding(rs, "EX");
+          tempRegisters[normRt] = valRs & parseInt(immStr);
+          break;
+        }
+        case "ori": {
+          const [rt, rs, immStr] = operands;
+          const normRt = normalizeRegister(rt);
+          const valRs = getRegisterValueConsideringForwarding(rs, "EX");
+          tempRegisters[normRt] = valRs | parseInt(immStr);
+          break;
+        }
+        case "xori": {
+          const [rt, rs, immStr] = operands;
+          const normRt = normalizeRegister(rt);
+          const valRs = getRegisterValueConsideringForwarding(rs, "EX");
+          tempRegisters[normRt] = valRs ^ parseInt(immStr);
+          break;
+        }
+        case "slti": {
+          const [rt, rs, immStr] = operands;
+          const normRt = normalizeRegister(rt);
+          const valRs = getRegisterValueConsideringForwarding(rs, "EX");
+          tempRegisters[normRt] = valRs < parseInt(immStr) ? 1 : 0;
+          break;
+        }
+        case "sltiu": {
+          const [rt, rs, immStr] = operands;
+          const normRt = normalizeRegister(rt);
+          const valRs = getRegisterValueConsideringForwarding(rs, "EX") >>> 0;
+          tempRegisters[normRt] = valRs < (parseInt(immStr) >>> 0) ? 1 : 0;
+          break;
+        }
+        case "lui": {
+          const [rt, immStr] = operands;
+          tempRegisters[normalizeRegister(rt)] = parseInt(immStr) << 16;
+          break;
+        }
+        // Saltos (Branches and Jumps)
+        case "beq": {
+          const [rs, rt, offsetStr] = operands;
+          const valRs = getRegisterValueConsideringForwarding(rs, "EX");
+          const valRt = getRegisterValueConsideringForwarding(rt, "EX");
+          if (valRs === valRt) {
+            newPC = PC + 1 + parseInt(offsetStr); // PC es el índice de la instrucción actual
+          }
+          break;
+        }
+        case "bne": {
+          const [rs, rt, offsetStr] = operands;
+          const valRs = getRegisterValueConsideringForwarding(rs, "EX");
+          const valRt = getRegisterValueConsideringForwarding(rt, "EX");
+          if (valRs !== valRt) {
+            newPC = PC + 1 + parseInt(offsetStr);
+          }
+          break;
+        }
+        case "j": {
+          const [targetAddrStr] = operands;
+          // El target en MIPS es una dirección de palabra (word address), PC se actualiza con esto.
+          // Si tu `instructions` array es 0-indexed, y targetAddrStr es una dirección de byte, divide por 4.
+          // Si targetAddrStr ya es un índice de instrucción, úsalo directamente.
+          // Aquí asumimos que targetAddrStr es una dirección de palabra que se usa como índice.
+          newPC = parseInt(targetAddrStr, 10); // o parseInt(targetAddrStr, 16) si es hexadecimal
+          break;
+        }
+        case "jal": {
+          const [targetAddrStr] = operands;
+          tempRegisters["$ra"] = (PC + 1) * 4; // Guarda la dirección de la SIGUIENTE instrucción (en bytes)
+          newPC = parseInt(targetAddrStr, 10);
+          break;
+        }
+        case "jr": {
+          const [rs] = operands;
+          const jumpAddrBytes = getRegisterValueConsideringForwarding(rs, "EX");
+          newPC = jumpAddrBytes / 4; // Convierte dirección de bytes a índice de instrucción
+          break;
+        }
+        // lw y sw calculan la dirección en EX, pero la acción real es en MEM
+        case "lw": case "sw": case "lb": case "lbu": case "lh": case "lhu": case "sb": case "sh": {
+            const [rtReg, offsetAndBase] = operands;
+            const offsetMatch = /(-?\d+)\(([^)]+)\)/.exec(offsetAndBase);
+            if (offsetMatch) {
+                const offset = parseInt(offsetMatch[1]);
+                const baseRegName = normalizeRegister(offsetMatch[2]);
+                const baseAddr = getRegisterValueConsideringForwarding(baseRegName, "EX");
+                const effectiveAddress = baseAddr + offset;
+                // Guardar la dirección efectiva para usar en MEM.
+                // Esto se haría en los latches del pipeline. Aquí simulamos guardándolo en tempRegisters
+                // bajo una clave especial o en un objeto de estado intermedio para la instrucción.
+                // Por simplicidad, lo recalcularemos en MEM o asumiremos que se pasó.
+                // Para esta función, simplemente calculamos y podríamos almacenarlo en una variable
+                // que se pasa a la etapa MEM si la arquitectura lo permite.
+                // console.log(`EX (${op}): Effective address calculated: ${effectiveAddress}`);
+            }
+            break;
+        }
+      }
+      break; // Fin de EX
+    }
+    case "MEM": {
+      switch (op) {
+        case "lw": case "lb": case "lbu": case "lh": case "lhu": {
+            const [rtReg, offsetAndBase] = operands;
+            const normRt = normalizeRegister(rtReg);
+            const offsetMatch = /(-?\d+)\(([^)]+)\)/.exec(offsetAndBase); // $rs
+            if (offsetMatch) {
+                const offset = parseInt(offsetMatch[1]);
+                const baseRegName = normalizeRegister(offsetMatch[2]);
+                // El valor de baseRegName debería ser el de la etapa EX
+                // Si hay forwarding de EX a MEM, tempRegisters[baseRegName] ya tendría el valor correcto.
+                const baseAddr = tempRegisters[baseRegName]; // Asume que EX lo calculó o fue forwardeado
+                const address = (baseAddr + offset); // Dirección de byte
+
+                // MIPS accede a memoria alineada a palabras para lw, etc.
+                // La memoria simulada es por palabras (índices 0-31). Convertimos la dirección de byte.
+                const wordAddress = Math.floor(address / 4);
+
+                if (wordAddress >= 0 && wordAddress < Object.keys(tempMemory).length) {
+                    let value = tempMemory[wordAddress];
+                    if (op === "lb") value = (value >> ((address % 4) * 8)) & 0xFF; // Sign extend manually if needed
+                    else if (op === "lbu") value = (value >> ((address % 4) * 8)) & 0xFF;
+                    else if (op === "lh") value = (value >> ((address % 4 === 0 ? 0 : 16))) & 0xFFFF; // Sign extend manually
+                    else if (op === "lhu") value = (value >> ((address % 4 === 0 ? 0 : 16))) & 0xFFFF;
+                    // lw ya toma la palabra entera
+                    tempRegisters[normRt] = value;
+                } else {
+                    // console.error(`MEM: Invalid memory address ${address} (word: ${wordAddress}) for ${op}`);
+                }
+            }
+            break;
+        }
+        case "sw": case "sb": case "sh": {
+            const [rtReg, offsetAndBase] = operands;
+            const valRt = getRegisterValueConsideringForwarding(rtReg, "MEM"); // Valor a escribir
+            const offsetMatch = /(-?\d+)\(([^)]+)\)/.exec(offsetAndBase);
+            if (offsetMatch) {
+                const offset = parseInt(offsetMatch[1]);
+                const baseRegName = normalizeRegister(offsetMatch[2]);
+                const baseAddr = tempRegisters[baseRegName];
+                const address = (baseAddr + offset);
+                const wordAddress = Math.floor(address / 4);
+
+                if (wordAddress >= 0 && wordAddress < Object.keys(tempMemory).length) {
+                    if (op === "sw") {
+                        tempMemory[wordAddress] = valRt;
+                    } else if (op === "sh") {
+                        const shift = (address % 4 === 0) ? 0 : 16;
+                        const mask = 0xFFFF << shift;
+                        tempMemory[wordAddress] = (tempMemory[wordAddress] & ~mask) | ((valRt & 0xFFFF) << shift);
+                    } else if (op === "sb") {
+                        const shift = (address % 4) * 8;
+                        const mask = 0xFF << shift;
+                        tempMemory[wordAddress] = (tempMemory[wordAddress] & ~mask) | ((valRt & 0xFF) << shift);
+                    }
+                } else {
+                    // console.error(`MEM: Invalid memory address ${address} (word: ${wordAddress}) for ${op}`);
+                }
+            }
+            break;
+        }
+      }
+      break; // Fin de MEM
+    }
+    case "WB": {
+      // La escritura real a los registros maestros ocurre aquí.
+      // En esta simulación, `tempRegisters` ya tiene los valores que se escribirían.
+      // `executeMIPSInstruction` devuelve `tempRegisters` y el caller (calculateNextState)
+      // los asignará al estado global de registros.
+      // console.log(`WB: Instruction ${mipsInstruction} completed.`);
+      break; // Fin de WB
+    }
+  }
+
+  // Asegurar que $zero siempre sea 0
+  if (tempRegisters["$zero"] !== 0) {
+    tempRegisters["$zero"] = 0;
+  }
+
+  return { updatedRegisters: tempRegisters, updatedMemory: tempMemory, nextPC: newPC };
+};
+
 const detectHazards = (
-  instructions: string[], // Added this parameter explicitly
+  instructions: string[],
   registerUsage: Record<number, RegisterUsage>,
   forwardingEnabled: boolean,
   stallsEnabled: boolean
-  // Potentially add branch prediction state here later
 ): [
   Record<number, HazardInfo>,
   Record<number, ForwardingInfo[]>,
@@ -183,12 +544,7 @@ const detectHazards = (
   const stalls: Record<number, number> = {};
 
   instructions.forEach((_, index) => {
-    hazards[index] = {
-      type: "NONE",
-      description: "No hazard",
-      canForward: false,
-      stallCycles: 0,
-    };
+    hazards[index] = { type: "NONE", description: "No hazard", canForward: false, stallCycles: 0 };
     forwardings[index] = [];
     stalls[index] = 0;
   });
@@ -197,134 +553,101 @@ const detectHazards = (
     return [hazards, forwardings, stalls];
   }
 
-  for (let i = 1; i < instructions.length; i++) {
+  for (let i = 0; i < instructions.length; i++) {
     const currentInst = registerUsage[i];
-    if (currentInst.type === "J") continue; // Jumps don't cause data hazards in this model
+    if (!currentInst) continue;
 
-    const j = i - 1; // Previous instruction index
-    const prevInst = registerUsage[j];
+    // Solo buscar dependencias con instrucciones anteriores
+    for (let j = Math.max(0, i - 2); j < i; j++) { // Considerar las 2 instrucciones previas
+      const prevInst = registerUsage[j];
+      if (!prevInst) continue;
 
-    // Skip if previous instruction doesn't write to a register that can cause a hazard
-    // (rd=0 is $zero, or for some instructions like J, it indicates no GPR write)
-    // JAL writes to $ra (rd=31), so this check is fine.
-    if (prevInst.rd === 0) continue;
+      // No hay hazard si la instrucción previa no escribe (rd=0) Y NO es una carga
+      // (las cargas escriben en rt, que se mapea a rd en parseInstruction si esLoad es true)
+      if (prevInst.rd === 0) continue;
 
 
-    let hasRawHazard = false;
-    let hazardRegister = "";
-    let hazardOnRs = false;
-    let hazardOnRtSource = false; // rt as a source register
+      let rawHazardOccurred = false;
+      let hazardRegName = "";
 
-    // Check RAW on rs: currentInst reads rs, prevInst writes to prevInst.rd
-    if (currentInst.rs !== 0 && currentInst.rs === prevInst.rd) {
-        hazardOnRs = true;
-        hazardRegister = `rs($${currentInst.rs})`;
-    }
-
-    // Check RAW on rt (if rt is used as a source by currentInst)
-    // rt is a source for R-type.
-    // rt is a source for I-type stores (e.g. sw $rt, offset($rs)) and branches (e.g. beq $rs, $rt, offset).
-    if (currentInst.rt !== 0 && currentInst.rt === prevInst.rd) {
-        if (currentInst.type === 'R') {
-            hazardOnRtSource = true;
-        } else if (currentInst.type === 'I') {
-            const op = currentInst.opcode;
-            // Store opcodes: 40 (sb), 41 (sh), 43 (sw)
-            // Branch opcodes: 4 (beq), 5 (bne)
-            // For these, rt is a source. For loads and ALU-imm, rt is destination (handled by currentInst.rd).
-            if ((op >= 40 && op <= 43 && op !== 42 /* exclude swl/r for simplicity */) || op === 4 || op === 5) {
-                hazardOnRtSource = true;
-            }
-        }
-        if (hazardOnRtSource) {
-             hazardRegister = hazardOnRs ? `${hazardRegister} & rt($${currentInst.rt})` : `rt($${currentInst.rt})`;
-        }
-    }
-    hasRawHazard = hazardOnRs || hazardOnRtSource;
-
-    if (hasRawHazard) {
-      if (prevInst.isLoad) { // Load-Use Hazard
-        hazards[i] = {
-          type: "RAW",
-          description: `Load-use hazard: Instruction ${i} (${hazardRegister}) depends on load in I${j}`,
-          canForward: forwardingEnabled, // Can forward from MEM
-          stallCycles: 1, // Always 1 stall for load-use, even with forwarding
-        };
-        stalls[i] = 1;
-        if (forwardingEnabled) {
-          // Forward from MEM stage of prevInst (I_j) to EX stage of currentInst (I_i)
-          forwardings[i] = [
-            ...(forwardings[i] || []), // Keep existing if any (e.g. if both rs and rt had hazards from different prev)
-            {
-              from: j,
-              to: i,
-              fromStage: "MEM",
-              toStage: "EX",
-              register: `$${prevInst.rd}`,
-            },
-          ];
-        }
-      } else { // General ALU-ALU RAW Hazard
-        if (forwardingEnabled) {
-          hazards[i] = {
-            type: "RAW",
-            description: `RAW hazard: Instruction ${i} (${hazardRegister}) depends on I${j} (forwarded)`,
-            canForward: true,
-            stallCycles: 0, // No stall if forwarded from EX/MEM
-          };
-          // Forward from EX stage of prevInst (I_j) to EX stage of currentInst (I_i)
-           forwardings[i] = [
-            ...(forwardings[i] || []),
-            {
-              from: j,
-              to: i,
-              fromStage: "EX", // Or MEM if it's a 2-cycle separated dependency
-              toStage: "EX",
-              register: `$${prevInst.rd}`,
-            },
-          ];
-        } else { // No forwarding
-          hazards[i] = {
-            type: "RAW",
-            description: `RAW hazard: Instruction ${i} (${hazardRegister}) depends on I${j} (no forwarding)`,
-            canForward: false,
-            stallCycles: 2, // Typically 2 stalls for ALU-ALU without forwarding
-          };
-          stalls[i] = 2;
+      // RAW: prevInst escribe en prevInst.rd, currentInst lee de currentInst.rs
+      if (currentInst.rs !== 0 && currentInst.rs === prevInst.rd) {
+        rawHazardOccurred = true;
+        hazardRegName = `$${regMap[currentInst.rs.toString()] || `r${currentInst.rs}`}`;
+      }
+      // RAW: prevInst escribe en prevInst.rd, currentInst lee de currentInst.rt (si rt es fuente)
+      // rt es fuente para R-type y para I-type stores/branches
+      else if (currentInst.rt !== 0 && currentInst.rt === prevInst.rd) {
+        if (currentInst.type === 'R' || currentInst.isStore || currentInst.isBranch) {
+           rawHazardOccurred = true;
+           hazardRegName = `$${regMap[currentInst.rt.toString()] || `r${currentInst.rt}`}`;
         }
       }
-    }
 
-    // Check for WAW hazards (only for instructions that write to the same register AND no RAW)
-    // rd can be 0 for instructions that don't write (e.g. sw, beq, j)
-    if (
-      currentInst.rd !== 0 && // Current instruction must write
-      prevInst.rd !== 0 &&    // Previous instruction must write
-      currentInst.rd === prevInst.rd &&
-      !hasRawHazard // Prioritize RAW
-    ) {
-      hazards[i] = {
-        type: "WAW",
-        description: `WAW hazard: Both I${i} and I${j} write to $${currentInst.rd}`,
-        canForward: true, // WAW handled by in-order pipeline stages or register renaming (not modeled here)
-        stallCycles: 0, // Typically no stalls for WAW in a simple 5-stage in-order pipeline
-      };
+      if (rawHazardOccurred) {
+        const distance = i - j; // 1 si j=i-1, 2 si j=i-2
+        if (prevInst.isLoad) { // Load-Use Hazard con I_(i-1)
+          if (distance === 1) { // Dependencia directa con la instrucción inmediatamente anterior
+            stalls[i] = Math.max(stalls[i], 1); // Load-use siempre 1 stall
+            hazards[i] = { type: "RAW", description: `Load-use: I${i} (${hazardRegName}) from lw I${j}`, canForward: forwardingEnabled, stallCycles: 1 };
+            if (forwardingEnabled) {
+              forwardings[i].push({ from: j, to: i, fromStage: "MEM", toStage: "EX", register: hazardRegName });
+            }
+          }
+          // Si distance === 2, el valor de la carga ya estaría disponible de MEM->WB y luego EX de la actual,
+          // o forwarding de MEM de I(i-2) a EX de I(i) (si es posible en 2 ciclos).
+          // En un pipeline simple, una carga a I(i-2) no causa stall a I(i) si hay forwarding.
+        } else { // ALU-Use Hazard
+          if (distance === 1) { // Dependencia con I_(i-1)
+            if (forwardingEnabled) {
+              // stalls[i] = 0; // Forwarding EX -> EX
+              hazards[i] = { type: "RAW", description: `RAW: I${i} (${hazardRegName}) from I${j} (EX->EX forward)`, canForward: true, stallCycles: 0 };
+              forwardings[i].push({ from: j, to: i, fromStage: "EX", toStage: "EX", register: hazardRegName });
+            } else {
+              stalls[i] = Math.max(stalls[i], 2); // Sin forwarding, 2 stalls
+              hazards[i] = { type: "RAW", description: `RAW: I${i} (${hazardRegName}) from I${j} (2 stalls)`, canForward: false, stallCycles: 2 };
+            }
+          } else if (distance === 2) { // Dependencia con I_(i-2)
+            if (forwardingEnabled) {
+              // stalls[i] = 0; // Forwarding MEM -> EX
+              hazards[i] = { type: "RAW", description: `RAW: I${i} (${hazardRegName}) from I${j} (MEM->EX forward)`, canForward: true, stallCycles: 0 };
+              forwardings[i].push({ from: j, to: i, fromStage: "MEM", toStage: "EX", register: hazardRegName });
+            } else {
+              stalls[i] = Math.max(stalls[i], 1); // Sin forwarding, 1 stall
+              hazards[i] = { type: "RAW", description: `RAW: I${i} (${hazardRegName}) from I${j} (1 stall)`, canForward: false, stallCycles: 1 };
+            }
+          }
+        }
+      }
+
+      // WAW Hazard: currentInst escribe en currentInst.rd, prevInst escribe en prevInst.rd
+      // Y no hubo RAW (RAW tiene prioridad y se maneja con stalls/forwarding)
+      if (!rawHazardOccurred && currentInst.rd !== 0 && prevInst.rd !== 0 && currentInst.rd === prevInst.rd) {
+        hazards[i] = {
+            type: "WAW",
+            description: `WAW: I${i} and I${j} both write to $${regMap[currentInst.rd.toString()] || `r${currentInst.rd}`}`,
+            canForward: false, // WAW se resuelven por orden de pipeline, no forwarding
+            stallCycles: 0 // Normalmente no causan stalls en pipelines simples en orden
+        };
+        // No se añaden stalls por WAW en este modelo simple.
+      }
     }
   }
   return [hazards, forwardings, stalls];
 };
 
+
 const calculatePrecedingStalls = (
   stalls: Record<number, number>,
-  index: number
+  index: number // Índice de la instrucción actual
 ): number => {
   let totalStalls = 0;
+  // Sumar los stalls de todas las instrucciones *anteriores* a 'index'
   for (let k = 0; k < index; k++) {
     totalStalls += stalls[k] || 0;
   }
   return totalStalls;
 };
-
 
 const calculateNextState = (currentState: SimulationState): SimulationState => {
   if (!currentState.isRunning || currentState.isFinished) {
@@ -332,156 +655,179 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
   }
 
   const nextCycle = currentState.currentCycle + 1;
-  const newInstructionStages: Record<number, number | null> = {};
-  let activeInstructionsInPipeline = 0; // Count instructions currently in stages IF through WB
+  let newPC = currentState.PC; // PC actual (índice de la próxima instrucción a buscar si no hay salto)
+  let tempRegisters = { ...currentState.registers };
+  let tempMemory = { ...currentState.memory };
+  const newInstructionStages: Record<number, number | null> = {}; // Etapas de las instrucciones *en este ciclo*
 
-  let newCurrentGlobalStallCycles = currentState.currentStallCycles;
-
-  // If we are in a global stall period (e.g. due to a load-use that required a bubble)
-  if (newCurrentGlobalStallCycles > 0) {
-    newCurrentGlobalStallCycles--;
-
-    // During a global stall, instructions "before" the stall point (typically IF, ID) are held.
-    // Instructions "after" the stall point (EX, MEM, WB) continue to advance.
-    // This is a simplified model. A real pipeline might stall more selectively.
-    currentState.instructions.forEach((_, index) => {
-      const currentStageOfInst = currentState.instructionStages[index];
-      if (currentStageOfInst !== null) {
-        // Assuming stall is injected after ID, before EX.
-        // So instructions in IF (0) or ID (1) are "stalled" (don't advance).
-        // Instructions in EX (2), MEM (3), WB (4) advance.
-        if (currentStageOfInst < 2) { // IF or ID
-          newInstructionStages[index] = currentStageOfInst; // Stay in current stage
-        } else { // EX, MEM, WB
-          newInstructionStages[index] = currentStageOfInst + 1;
-          if (newInstructionStages[index]! >= currentState.stageCount) {
-            newInstructionStages[index] = null; // Instruction completed
-          }
-        }
-        if (newInstructionStages[index] !== null) {
-          activeInstructionsInPipeline++;
-        }
-      } else {
-        // If instruction not yet in pipeline, it remains not in pipeline,
-        // unless it's the next one to be fetched (handled below).
-        newInstructionStages[index] = null;
-      }
-    });
-     // If the first instruction (index 0) is not yet in the pipeline and we are stalling,
-     // it should not be fetched.
-     // This logic gets complex quickly. Let's simplify for now:
-     // The main loop below handles fetching new instructions.
-     // If stalling, the `effectiveEntryCycle` calculation naturally delays new fetches.
-
+  // 1. Manejar stalls globales pendientes
+  if (currentState.currentStallCycles > 0) {
+    // Simplemente decrementamos el contador de stalls y mantenemos el estado actual del pipeline
+    // Las instrucciones "congeladas" no avanzan.
+    // Esto es una simplificación; un pipeline real podría permitir que algunas etapas posteriores continúen.
     return {
       ...currentState,
       currentCycle: nextCycle,
-      instructionStages: newInstructionStages,
-      currentStallCycles: newCurrentGlobalStallCycles,
-      isRunning: true, // Still running during stall, unless finished
-      isFinished: false, // Not finished while stalling active cycles
+      currentStallCycles: currentState.currentStallCycles - 1,
+      // instructionStages se mantiene, PC no avanza, registros y memoria no cambian por ejecución este ciclo
     };
   }
 
-  // --- Regular Cycle Progression (No Active Global Stall) ---
+  // 2. Avanzar instrucciones y ejecutar
+  let activeInstructionsInPipeline = 0;
+  let maxReachedStageThisCycleForPCUpdate = -1; // Para saber si la instrucción que salta ya pasó EX
+  let pcUpdateFromInstructionIndex: number | undefined = undefined; // Índice de la instrucción que causó el salto
+  let jumpTakenInCycle = false;
 
-  // Calculate total sum of per-instruction stalls detected by detectHazards
-  // These are potential stalls that trigger the `currentStallCycles` countdown.
-  let totalStallsFromDetection = 0;
-  Object.values(currentState.stalls).forEach((s) => {
-    totalStallsFromDetection += s;
-  });
+  // Iterar sobre las instrucciones que podrían estar en el pipeline
+  // El pipeline puede tener 'stageCount' instrucciones activas.
+  // Consideramos un rango de instrucciones alrededor del PC actual.
+  const pipelineDepth = currentState.stageCount;
+  const startIndex = Math.max(0, newPC - pipelineDepth); // No ir antes de la instrucción 0
+  const endIndex = Math.min(currentState.instructions.length - 1, newPC + pipelineDepth);
 
-  let anyInstCausedNewStallThisCycle = false;
 
-  currentState.instructions.forEach((_, index) => {
-    const precedingStallsForThisInst = calculatePrecedingStalls(currentState.stalls, index);
-    
-    // Effective cycle when this instruction *would* enter the IF stage without pipeline stalls from *other* instructions
-    const baseEntryCycleForInst = index + 1; 
-    
-    // Actual entry cycle considering stalls *caused by this instruction and preceding ones*
-    // This is complex. Simpler: stage an instruction is in at `nextCycle`.
-    // An instruction `i` enters IF at cycle `i+1 + sum_of_stalls_before_i_and_by_i_at_ID`.
-    // Let currentInstructionStage be the stage an instruction *was* in.
-    const prevStageOfInst = currentState.instructionStages[index];
-
-    let nextStageForInst: number | null = null;
-
-    if (prevStageOfInst === null) { // Instruction not yet in pipeline
-        // Can it be fetched this cycle?
-        // Enters IF (stage 0) if `nextCycle` matches its `baseEntryCycle` + `precedingStalls`
-        // (The `precedingStalls` here are stalls caused by *previous* instructions that have already resolved
-        //  and impacted when *this* instruction can start)
-        if (nextCycle >= baseEntryCycleForInst + precedingStallsForThisInst) {
-            nextStageForInst = 0; // Enters IF
-        } else {
-            nextStageForInst = null;
-        }
-    } else { // Instruction already in pipeline
-        nextStageForInst = prevStageOfInst + 1;
+  for (let instIndexInArray = 0; instIndexInArray < currentState.instructions.length; instIndexInArray++) {
+    const instructionHex = currentState.instructions[instIndexInArray];
+    if (!instructionHex) {
+        newInstructionStages[instIndexInArray] = null;
+        continue;
     }
 
-    // Check if this instruction, upon reaching a certain stage (e.g., ID), causes a stall
-    if (nextStageForInst === 1 /* ID stage */ && currentState.stalls[index] > 0 && !anyInstCausedNewStallThisCycle) {
-        // This instruction is now in ID and requires stalls.
-        // These stalls will apply starting from the *next* cycle.
-        newCurrentGlobalStallCycles = currentState.stalls[index];
-        anyInstCausedNewStallThisCycle = true;
-        // The instruction itself still moves to ID this cycle. The stall affects subsequent progression.
-    }
+    // Calcular la etapa en la que estaría esta instrucción en `nextCycle`
+    const precedingStallsForThisInst = calculatePrecedingStalls(currentState.stalls, instIndexInArray);
+    // La instrucción `instIndexInArray` entra en IF en el ciclo `instIndexInArray + 1 + precedingStallsForThisInst`
+    const entryCycleToIF = instIndexInArray + 1 + precedingStallsForThisInst;
+    const currentStageIndex = nextCycle - entryCycleToIF;
 
 
-    if (nextStageForInst !== null && nextStageForInst >= currentState.stageCount) {
-      newInstructionStages[index] = null; // Instruction completed WB
-    } else {
-      newInstructionStages[index] = nextStageForInst;
-    }
-
-    if (newInstructionStages[index] !== null) {
+    if (currentStageIndex >= 0 && currentStageIndex < currentState.stageCount) {
+      newInstructionStages[instIndexInArray] = currentStageIndex;
       activeInstructionsInPipeline++;
-    }
-  });
 
+      const stageName = STAGE_NAMES[currentStageIndex];
+      let executionResult: { updatedRegisters: Record<string, number>, updatedMemory: Record<string, number>, nextPC?: number } | undefined;
 
-  const estimatedCompletionCycle =
-    currentState.instructions.length > 0
-      ? currentState.instructions.length + currentState.stageCount - 1 + totalStallsFromDetection
-      : 0;
+      if (stageName === "EX" || stageName === "MEM" || stageName === "WB") {
+          executionResult = executeMIPSInstruction(
+            instructionHex,
+            tempRegisters, // Pasar una copia para que cada instrucción opere sobre ella
+            tempMemory,
+            instIndexInArray, // PC de la instrucción actual
+            stageName,
+            currentState.forwardings[instIndexInArray] || [],
+            nextCycle,
+            currentState.forwardingEnabled
+          );
+          tempRegisters = executionResult.updatedRegisters; // Actualizar con los resultados
+          tempMemory = executionResult.updatedMemory;
 
-  // isFinished: no instructions are active in the pipeline AND we are past the initial fetch cycles.
-  // A more robust check: all instructions have passed WB (are null in instructionStages)
-  // AND we are at or beyond the estimatedCompletionCycle.
-  let allInstructionsCompleted = true;
-  if (currentState.instructions.length === 0) {
-    allInstructionsCompleted = true; // No instructions, so considered completed.
-  } else {
-    for (let i = 0; i < currentState.instructions.length; i++) {
-        if (newInstructionStages[i] !== null) {
-            allInstructionsCompleted = false;
-            break;
-        }
+          if (stageName === "EX" && executionResult.nextPC !== undefined) {
+            // Un salto se resuelve en EX. Si ocurre, este será el nuevo PC.
+            // Solo la primera instrucción que salta en EX este ciclo debe cambiar el PC.
+            if (!jumpTakenInCycle) {
+                newPC = executionResult.nextPC;
+                jumpTakenInCycle = true;
+                pcUpdateFromInstructionIndex = instIndexInArray;
+                // Aquí se necesitaría lógica para invalidar (flush) las instrucciones posteriores
+                // que fueron buscadas incorrectamente.
+                // console.log(`Cycle ${nextCycle}: Branch/Jump taken by I${instIndexInArray} to PC=${newPC}. Flushing subsequent fetches.`);
+            }
+          }
+      }
+
+      // Si esta instrucción está entrando en ID y requiere stalls, activarlos para el *próximo* ciclo.
+      if (stageName === "ID" && currentState.stalls[instIndexInArray] > 0 && currentState.currentStallCycles === 0) {
+        // Esta es una simplificación. currentState.currentStallCycles debería ser el nuevo valor.
+        // Pero para evitar múltiples stalls en un ciclo, solo el primero lo activa.
+        // Esto necesita una lógica más robusta para acumular stalls.
+        // Por ahora, el `currentStallCycles` global se activa.
+        return { // Devolver estado con el stall activado para el próximo ciclo.
+            ...currentState,
+            currentCycle: nextCycle,
+            instructionStages: newInstructionStages, // Mostrar etapas actuales
+            registers: tempRegisters,
+            memory: tempMemory,
+            PC: currentState.PC, // PC no cambia aún por el stall
+            currentStallCycles: currentState.stalls[instIndexInArray], // Activar los stalls
+            isRunning: true, // Sigue corriendo
+            isFinished: false,
+        };
+      }
+
+    } else {
+      newInstructionStages[instIndexInArray] = null; // Fuera del pipeline
     }
   }
-  
-  const isNowFinished = allInstructionsCompleted && (currentState.instructions.length === 0 || nextCycle > estimatedCompletionCycle);
-  // If we just triggered new stalls, we are not finished.
-  const finalIsFinished = isNowFinished && !anyInstCausedNewStallThisCycle && newCurrentGlobalStallCycles === 0;
+
+
+  // 3. Determinar si la simulación ha terminado
+  let allInstructionsProcessed = true;
+  if (currentState.instructions.length === 0) {
+    allInstructionsProcessed = true;
+  } else {
+    // Se considera terminado si la última instrucción ha salido de WB y no hay saltos pendientes
+    const lastInstIndex = currentState.instructions.length - 1;
+    if (newInstructionStages[lastInstIndex] === null && currentState.instructionStages[lastInstIndex] === STAGE_NAMES.length -1){
+        // La última instrucción estaba en WB y ahora es null.
+    } else {
+        allInstructionsProcessed = false;
+    }
+    // O si el PC se movió más allá del final de las instrucciones y no hay nada en el pipeline
+    if (newPC >= currentState.instructions.length && activeInstructionsInPipeline === 0) {
+        allInstructionsProcessed = true;
+    } else if (activeInstructionsInPipeline > 0) {
+        allInstructionsProcessed = false;
+    }
+
+  }
+
+  const isNowFinished = allInstructionsProcessed && !jumpTakenInCycle; // Si hubo un salto, no hemos terminado aún
+
+  // 4. Si hubo un salto, invalidar etapas de instrucciones posteriores
+  if (jumpTakenInCycle && pcUpdateFromInstructionIndex !== undefined) {
+      for (let i = pcUpdateFromInstructionIndex + 1; i < currentState.instructions.length; i++) {
+          if (newInstructionStages[i] !== null && newInstructionStages[i]! < STAGE_NAMES.indexOf("EX")) {
+              // Si la instrucción está antes de EX (IF, ID), se flushea
+              // console.log(`Flushing I${i} from stage ${STAGE_NAMES[newInstructionStages[i]!]} due to jump by I${pcUpdateFromInstructionIndex}`);
+              newInstructionStages[i] = null; // Simula el flush
+          }
+      }
+      // El PC ya fue actualizado a `newPC`
+  } else if (!jumpTakenInCycle && activeInstructionsInPipeline > 0) {
+    // Si no hubo salto y hay instrucciones activas, el PC avanza para buscar la siguiente (si no estamos al final)
+    // Esta lógica de avance de PC es para el *fetch* del próximo ciclo.
+    // El PC que se usa para calcular las etapas es el `currentState.PC`.
+    // El `newPC` aquí es el que se usará como `currentState.PC` en el *siguiente* ciclo.
+    if (currentState.PC < currentState.instructions.length -1 && activeInstructionsInPipeline > 0) {
+        // Este newPC es el PC para el fetch del siguiente ciclo.
+        // Si no hubo saltos, el PC del fetch avanza.
+        // No es el PC de la instrucción actual, sino el "puntero" a la próxima a fetchear.
+        // La lógica actual de `entryCycleToIF` ya considera el índice de la instrucción,
+        // por lo que el `PC` del estado debe representar el índice base para el fetch.
+        // newPC = currentState.PC + 1; // Esto es si modelamos el PC como el fetch pointer.
+        // La implementación actual parece tratar PC como la instrucción más temprana en el pipeline.
+        // Dejaré newPC como está si no hay saltos, y el bucle de instIndexInArray maneja el progreso.
+    }
+  }
+
 
   return {
     ...currentState,
-    currentCycle: finalIsFinished && estimatedCompletionCycle > 0 ? estimatedCompletionCycle : nextCycle,
+    currentCycle: nextCycle,
     instructionStages: newInstructionStages,
-    isRunning: !finalIsFinished,
-    isFinished: finalIsFinished,
-    currentStallCycles: newCurrentGlobalStallCycles,
+    registers: tempRegisters,
+    memory: tempMemory,
+    PC: newPC, // Actualizar PC si hubo un salto, o se mantiene para el próximo fetch
+    isRunning: !isNowFinished,
+    isFinished: isNowFinished,
+    currentStallCycles: 0, // Se consumieron los stalls pendientes este ciclo
   };
 };
 
 
 export function SimulationProvider({ children }: PropsWithChildren) {
-  const [simulationState, setSimulationState] =
-    useState<SimulationState>(initialState);
+  const [simulationState, setSimulationState] = useState<SimulationState>(initialState);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
   const clearTimer = () => {
@@ -491,24 +837,23 @@ export function SimulationProvider({ children }: PropsWithChildren) {
     }
   };
 
+  // runClock ahora no depende de simulationState.isRunning/isFinished directamente
   const runClock = useCallback(() => {
     clearTimer();
-    // Check isRunning and isFinished from the state directly inside setInterval's callback
-    // to ensure it uses the latest state, not the one captured by useCallback's closure.
     intervalRef.current = setInterval(() => {
-      setSimulationState((prevState) => {
+      setSimulationState((prevState) => { // Usar prevState para obtener el estado más reciente
         if (!prevState.isRunning || prevState.isFinished) {
-            clearTimer();
-            return prevState; // No change if not running or finished
+          clearTimer();
+          return prevState; // No hacer nada si no está corriendo o ya terminó
         }
         const nextState = calculateNextState(prevState);
-        if (nextState.isFinished && !prevState.isFinished) { // If it just became finished
-          clearTimer();
+        if (nextState.isFinished && !prevState.isFinished) {
+          clearTimer(); // Detener el timer si acaba de terminar
         }
         return nextState;
       });
-    }, 1000);
-  }, []); // runClock itself doesn't depend on isRunning/isFinished for its definition
+    }, 700); // Intervalo ajustado
+  }, []); // No hay dependencias externas para la definición de runClock
 
   useEffect(() => {
     if (simulationState.isRunning && !simulationState.isFinished) {
@@ -516,14 +861,15 @@ export function SimulationProvider({ children }: PropsWithChildren) {
     } else {
       clearTimer();
     }
-    return clearTimer;
+    return clearTimer; // Limpieza al desmontar o cuando cambian las dependencias
   }, [simulationState.isRunning, simulationState.isFinished, runClock]);
 
 
   const resetSimulation = useCallback(() => {
     clearTimer();
     setSimulationState((prevState) => ({
-      ...initialState,
+      ...initialState, // Reinicia a los valores por defecto del simulador
+      // Pero conserva la configuración del usuario
       forwardingEnabled: prevState.forwardingEnabled,
       stallsEnabled: prevState.stallsEnabled,
       branchPredictionMode: prevState.branchPredictionMode,
@@ -545,62 +891,57 @@ export function SimulationProvider({ children }: PropsWithChildren) {
       submittedInstructions.forEach((inst, index) => {
         registerUsage[index] = parseInstruction(inst);
       });
-      
-      // Use current state for forwarding/stallsEnabled from simulationState
+
+      // Usar el estado actual para forwardingEnabled y stallsEnabled
       const currentForwardingEnabled = simulationState.forwardingEnabled;
       const currentStallsEnabled = simulationState.stallsEnabled;
 
-      // Corrected call to detectHazards
       const [hazards, forwardings, stalls] = detectHazards(
-        submittedInstructions, // Pass the instructions array
+        submittedInstructions,
         registerUsage,
-        currentForwardingEnabled,
-        currentStallsEnabled
+        currentForwardingEnabled, // Usar el valor actual del estado
+        currentStallsEnabled    // Usar el valor actual del estado
       );
 
       let totalStallCycles = 0;
-      Object.values(stalls).forEach((s) => { totalStallCycles += s; });
+      Object.values(stalls).forEach((stall) => { totalStallCycles += stall; });
 
-      const calculatedMaxCycles =
-        submittedInstructions.length + DEFAULT_STAGE_COUNT - 1 + totalStallCycles;
+      const calculatedMaxCycles = submittedInstructions.length + DEFAULT_STAGE_COUNT - 1 + totalStallCycles;
       
-      const initialStages: Record<number, number | null> = {};
-      // Instructions start as null, calculateNextState will fetch I0 in the first cycle (0 -> 1)
-      submittedInstructions.forEach((_, index) => {
-          initialStages[index] = null;
+      const initialStagesAfterParse: Record<number, number | null> = {};
+        submittedInstructions.forEach((_, index) => {
+            initialStagesAfterParse[index] = null; // Todas las instrucciones comienzan fuera del pipeline
       });
 
 
-      setSimulationState((prevState) => ({
-        ...initialState, // Start from a clean slate for simulation-specific data
-        // Preserve configurations from prevState
+      setSimulationState(prevState => ({
+        ...initialState, // Base limpia para datos de simulación
+        // Conservar configuración de prevState
         forwardingEnabled: prevState.forwardingEnabled,
         stallsEnabled: prevState.stallsEnabled,
         branchPredictionMode: prevState.branchPredictionMode,
         staticBranchPrediction: prevState.staticBranchPrediction,
         stateMachineInitialPrediction: prevState.stateMachineInitialPrediction,
         stateMachineFailsToSwitch: prevState.stateMachineFailsToSwitch,
-        // Set new simulation data
+        // Nuevos datos de simulación
         instructions: submittedInstructions,
-        currentCycle: 0, // Will advance to 1 on the first tick
+        currentCycle: 0, // El primer ciclo real será 1
         maxCycles: calculatedMaxCycles,
         isRunning: true,
         stageCount: DEFAULT_STAGE_COUNT,
-        instructionStages: initialStages,
+        instructionStages: initialStagesAfterParse, // Se poblará en calculateNextState
         isFinished: false,
         registerUsage,
         hazards,
         forwardings,
         stalls,
         currentStallCycles: 0,
+        PC: 0, // PC comienza en la primera instrucción
+        registers: { ...initialState.registers }, // Reinicia registros
+        memory: { ...initialState.memory },       // Reinicia memoria
       }));
     },
-    // Dependencies for startSimulation
-    [ resetSimulation,
-      simulationState.forwardingEnabled,
-      simulationState.stallsEnabled,
-      // Add branch prediction states if detectHazards starts using them
-    ]
+    [ resetSimulation, simulationState.forwardingEnabled, simulationState.stallsEnabled ]
   );
 
   const pauseSimulation = useCallback(() => {
@@ -615,8 +956,7 @@ export function SimulationProvider({ children }: PropsWithChildren) {
 
   const resumeSimulation = useCallback(() => {
     setSimulationState((prevState) => {
-      // Allow resume if not running, not finished, and there are instructions
-      if ( !prevState.isRunning && !prevState.isFinished && prevState.instructions.length > 0 ) {
+      if ( !prevState.isRunning && prevState.instructions.length > 0 && !prevState.isFinished ) {
         return { ...prevState, isRunning: true };
       }
       return prevState;
@@ -624,53 +964,32 @@ export function SimulationProvider({ children }: PropsWithChildren) {
   }, []);
 
   const setForwardingEnabled = useCallback((enabled: boolean) => {
-    setSimulationState((prevState) => ({
-      ...prevState,
-      forwardingEnabled: enabled,
-    }));
+    setSimulationState((prevState) => ({ ...prevState, forwardingEnabled: enabled }));
   }, []);
 
   const setStallsEnabled = useCallback((enabled: boolean) => {
     setSimulationState((prevState) => ({
       ...prevState,
       stallsEnabled: enabled,
-      // If stalls are disabled, forwarding is implicitly not relevant in the same way
-      forwardingEnabled: enabled ? prevState.forwardingEnabled : false,
+      forwardingEnabled: enabled ? prevState.forwardingEnabled : false, // Si se desactivan stalls, forwarding también se desactiva visualmente/lógicamente
     }));
   }, []);
 
+  // Implementación de Acciones de Predicción de Saltos
   const setBranchPredictionMode = useCallback((mode: BranchPredictionMode) => {
-    setSimulationState((prevState) => ({
-      ...prevState,
-      branchPredictionMode: mode,
-    }));
+    setSimulationState((prevState) => ({ ...prevState, branchPredictionMode: mode }));
   }, []);
 
-  const setStaticBranchPrediction = useCallback(
-    (prediction: StaticBranchPrediction) => {
-      setSimulationState((prevState) => ({
-        ...prevState,
-        staticBranchPrediction: prediction,
-      }));
-    },
-    []
-  );
+  const setStaticBranchPrediction = useCallback((prediction: StaticBranchPrediction) => {
+    setSimulationState((prevState) => ({ ...prevState, staticBranchPrediction: prediction }));
+  }, []);
 
-  const setStateMachineInitialPrediction = useCallback(
-    (prediction: StateMachineInitialPrediction) => {
-      setSimulationState((prevState) => ({
-        ...prevState,
-        stateMachineInitialPrediction: prediction,
-      }));
-    },
-    []
-  );
+  const setStateMachineInitialPrediction = useCallback((prediction: StateMachineInitialPrediction) => {
+    setSimulationState((prevState) => ({ ...prevState, stateMachineInitialPrediction: prediction }));
+  }, []);
 
   const setStateMachineFailsToSwitch = useCallback((fails: number) => {
-    setSimulationState((prevState) => ({
-      ...prevState,
-      stateMachineFailsToSwitch: Math.max(1, fails),
-    }));
+    setSimulationState((prevState) => ({ ...prevState, stateMachineFailsToSwitch: Math.max(1, fails) })); // Asegurar que sea al menos 1
   }, []);
 
 
@@ -687,22 +1006,10 @@ export function SimulationProvider({ children }: PropsWithChildren) {
       setStateMachineInitialPrediction,
       setStateMachineFailsToSwitch,
     }),
-    [
-      startSimulation,
-      resetSimulation,
-      pauseSimulation,
-      resumeSimulation,
-      setForwardingEnabled,
-      setStallsEnabled,
-      setBranchPredictionMode,
-      setStaticBranchPrediction,
-      setStateMachineInitialPrediction,
-      setStateMachineFailsToSwitch,
+    [ startSimulation, resetSimulation, pauseSimulation, resumeSimulation, setForwardingEnabled, setStallsEnabled,
+      setBranchPredictionMode, setStaticBranchPrediction, setStateMachineInitialPrediction, setStateMachineFailsToSwitch,
     ]
   );
-
-  // The simulationState object is already the value for the context
-  // const stateValue: SimulationState = simulationState; // This is redundant
 
   return (
     <SimulationStateContext.Provider value={simulationState}>
@@ -716,9 +1023,7 @@ export function SimulationProvider({ children }: PropsWithChildren) {
 export function useSimulationState() {
   const context = useContext(SimulationStateContext);
   if (context === undefined) {
-    throw new Error(
-      "useSimulationState must be used within a SimulationProvider"
-    );
+    throw new Error("useSimulationState must be used within a SimulationProvider");
   }
   return context;
 }
@@ -726,9 +1031,7 @@ export function useSimulationState() {
 export function useSimulationActions() {
   const context = useContext(SimulationActionsContext);
   if (context === undefined) {
-    throw new Error(
-      "useSimulationActions must be used within a SimulationProvider"
-    );
+    throw new Error("useSimulationActions must be used within a SimulationProvider");
   }
   return context;
 }
