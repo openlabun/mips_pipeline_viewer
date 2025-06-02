@@ -1,21 +1,23 @@
-'use client';
+"use client";
 
-import type * as React from 'react';
-import { useState, useEffect } from 'react';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
-import { Button } from '@/components/ui/button';
+import type * as React from "react";
+import { useState, useEffect } from "react";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Button } from "@/components/ui/button";
+import { BranchConfigurationPanel } from "@/components/ui/branchButtons";
+
 import {
   Card,
   CardContent,
   CardHeader,
   CardTitle,
   CardDescription,
-} from '@/components/ui/card';
+} from "@/components/ui/card";
 import {
   useSimulationActions,
   useSimulationState,
-} from '@/context/SimulationContext'; // Import context hooks
+} from "@/context/SimulationContext";
 import {
   Play,
   Pause,
@@ -23,29 +25,33 @@ import {
   AlertTriangle,
   Zap,
   StopCircle,
-} from 'lucide-react';
-import { Switch } from '@/components/ui/switch';
+} from "lucide-react";
+import { Switch } from "@/components/ui/switch";
 
 interface InstructionInputProps {
   onInstructionsSubmit: (instructions: string[]) => void;
   onReset: () => void;
-  isRunning: boolean; // Keep isRunning prop for button state logic
+  isRunning: boolean;
 }
 
-const HEX_REGEX = /^[0-9a-fA-F]{8}$/; // Basic check for 8 hex characters
+const HEX_REGEX = /^[0-9a-fA-F]{8}$/;
+//const { predictionMode } = useSimulationState();
 
 export function InstructionInput({
   onInstructionsSubmit,
   onReset,
   isRunning,
 }: InstructionInputProps) {
-  const [inputText, setInputText] = useState<string>('');
+  const [inputText, setInputText] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
+
   const {
     pauseSimulation,
     resumeSimulation,
     setForwardingEnabled,
     setStallsEnabled,
+    setPredictionMode,
+    setStateMachineConfig,
   } = useSimulationActions();
   const {
     currentCycle,
@@ -56,6 +62,7 @@ export function InstructionInput({
     forwardingEnabled,
     stallsEnabled,
     forwardings,
+    predictionMode,
   } = useSimulationState();
 
   useEffect(() => {
@@ -65,14 +72,12 @@ export function InstructionInput({
   }, [instructions]);
 
   const hasStarted = currentCycle > 0;
-  // Can only pause/resume if started and not finished
   const canPauseResume = hasStarted && !isFinished;
-  // Input/Start button should be disabled if simulation has started and isn't finished
   const disableInputAndStart = hasStarted && !isFinished;
+  const { rerunSimulation } = useSimulationActions();
 
-  // Count hazards and stalls
   const hazardCount = Object.values(hazards).filter(
-    (h) => h.type !== 'NONE'
+    (h) => h.type !== "NONE"
   ).length;
   const stallCount = Object.values(stalls).reduce((sum, s) => sum + s, 0);
   const forwardingCount = Object.values(forwardings).filter(
@@ -81,14 +86,14 @@ export function InstructionInput({
 
   const handleSubmit = () => {
     setError(null);
-    const lines = inputText.trim().split('\n');
+    const lines = inputText.trim().split("\n");
     const currentInstructions = lines
       .map((line) => line.trim())
       .filter((line) => line.length > 0);
 
     if (currentInstructions.length === 0) {
       setError(
-        'Please enter at least one MIPS instruction in hexadecimal format.'
+        "Please enter at least one MIPS instruction in hexadecimal format."
       );
       return;
     }
@@ -99,12 +104,11 @@ export function InstructionInput({
     if (invalidInstructions.length > 0) {
       setError(
         `Invalid instruction format found: ${invalidInstructions.join(
-          ', '
+          ", "
         )}. Each instruction must be 8 hexadecimal characters.`
       );
       return;
     }
-
     onInstructionsSubmit(currentInstructions);
   };
 
@@ -116,18 +120,15 @@ export function InstructionInput({
     }
   };
 
-  // Function to handle the change of forwarding
   const handleForwardingChange = (checked: boolean) => {
     setForwardingEnabled(checked);
-
-    // If the simulation has finished, restart it with the new configuration
     if (hasStarted && isFinished) {
       setTimeout(() => {
         onReset();
         setTimeout(() => {
           const currentInstructions = inputText
             .trim()
-            .split('\n')
+            .split("\n")
             .map((line) => line.trim())
             .filter((line) => line.length > 0);
 
@@ -139,23 +140,18 @@ export function InstructionInput({
     }
   };
 
-  // Function to handle the change of stalls
   const handleStallsChange = (checked: boolean) => {
     setStallsEnabled(checked);
-
-    // If stalls are disabled, also disable forwarding since it doesn't make sense
     if (!checked) {
       setForwardingEnabled(false);
     }
-
-    // If the simulation has finished, restart it with the new configuration
     if (hasStarted && isFinished) {
       setTimeout(() => {
         onReset();
         setTimeout(() => {
           const currentInstructions = inputText
             .trim()
-            .split('\n')
+            .split("\n")
             .map((line) => line.trim())
             .filter((line) => line.length > 0);
 
@@ -168,7 +164,7 @@ export function InstructionInput({
   };
 
   return (
-    <Card className='w-full max-w-md'>
+    <Card className="w-full max-w-md">
       <CardHeader>
         <CardTitle>MIPS Instructions</CardTitle>
         <CardDescription>
@@ -176,101 +172,100 @@ export function InstructionInput({
           with hazard detection
         </CardDescription>
       </CardHeader>
-      <CardContent className='space-y-4'>
-        <div className='grid w-full gap-1.5'>
-          <Label htmlFor='instructions'>
+      <CardContent className="space-y-4">
+        <div className="grid w-full gap-1.5">
+          <Label htmlFor="instructions">
             Enter Hex Instructions (one per line)
           </Label>
           <Textarea
-            id='instructions'
-            placeholder='e.g., 00a63820...' // Removed 0x prefix for consistency with regex
+            id="instructions"
+            placeholder="e.g., 00a63820..."
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
             rows={5}
-            className='font-mono'
-            // Disable input field if simulation has started and not yet finished
+            className="font-mono"
             disabled={disableInputAndStart}
-            aria-label='MIPS Hex Instructions Input'
+            aria-label="MIPS Hex Instructions Input"
           />
-          {error && <p className='text-sm text-destructive'>{error}</p>}
+          {error && <p className="text-sm text-destructive">{error}</p>}
         </div>
 
         {/* Pipeline configuration switches */}
-        <div className='space-y-3 p-3 bg-muted/50 rounded-lg'>
-          <h4 className='text-sm font-medium'>Pipeline Configuration</h4>
+        <div className="space-y-3 p-3 bg-muted/50 rounded-lg">
+          <h4 className="text-sm font-medium">Pipeline Configuration</h4>
 
-          {/* Stalls and hazard detection switch */}
-          <div className='flex items-center space-x-2'>
+          <div className="flex items-center space-x-2">
             <Switch
-              id='stalls-mode'
+              id="stalls-mode"
               checked={stallsEnabled}
               onCheckedChange={handleStallsChange}
               disabled={disableInputAndStart}
             />
-            <Label htmlFor='stalls-mode' className='text-sm'>
+            <Label htmlFor="stalls-mode" className="text-sm">
               Enable Hazard Detection & Stalls
             </Label>
           </div>
 
-          {/* Forwarding configuration switch - only available if stalls are enabled */}
-          <div className='flex items-center space-x-2'>
+          <div className="flex items-center space-x-2">
             <Switch
-              id='forwarding-mode'
+              id="forwarding-mode"
               checked={forwardingEnabled && stallsEnabled}
               onCheckedChange={handleForwardingChange}
               disabled={disableInputAndStart || !stallsEnabled}
             />
             <Label
-              htmlFor='forwarding-mode'
+              htmlFor="forwarding-mode"
               className={`text-sm ${
-                !stallsEnabled ? 'text-muted-foreground' : ''
+                !stallsEnabled ? "text-muted-foreground" : ""
               }`}
             >
               Enable Data Forwarding
             </Label>
           </div>
 
+          {/* Reusable branch configuration panel */}
+          <BranchConfigurationPanel disabled={hasStarted && !isFinished} />
+
           {!stallsEnabled && (
-            <p className='text-xs text-muted-foreground'>
+            <p className="text-xs text-muted-foreground">
               When hazard detection is disabled, all instructions execute in
               ideal 5-stage pipeline without stalls or forwarding.
             </p>
           )}
         </div>
 
-        {/* Show hazard statistics if simulation has started */}
         {hasStarted && stallsEnabled && (
-          <div className='flex flex-col gap-1 p-2 bg-muted rounded'>
+          <div className="flex flex-col gap-1 p-2 bg-muted rounded">
             {hazardCount > 0 ? (
               <>
-                <div className='flex items-center text-sm'>
-                  <AlertTriangle className='w-4 h-4 mr-2 text-yellow-500' />
+                <div className="flex items-center text-sm">
+                  <AlertTriangle className="w-4 h-4 mr-2 text-yellow-500" />
                   <span>{hazardCount} hazards detected</span>
                 </div>
                 {forwardingEnabled && forwardingCount > 0 && (
-                  <div className='flex items-center text-sm'>
-                    <Zap className='w-4 h-4 mr-2 text-green-500' />
+                  <div className="flex items-center text-sm">
+                    <Zap className="w-4 h-4 mr-2 text-green-500" />
                     <span>{forwardingCount} forwarding paths active</span>
                   </div>
                 )}
                 {stallCount > 0 && (
-                  <div className='flex items-center text-sm'>
-                    <AlertTriangle className='w-4 h-4 mr-2 text-red-500' />
+                  <div className="flex items-center text-sm">
+                    <AlertTriangle className="w-4 h-4 mr-2 text-red-500" />
                     <span>{stallCount} stall cycles added</span>
                   </div>
                 )}
-                <div className='flex items-center text-sm'>
-                  <Zap className='w-4 h-4 mr-2 text-green-500' />
+                <div className="flex items-center text-sm">
+                  <Zap className="w-4 h-4 mr-2 text-green-500" />
                   <span>
                     {forwardingEnabled
-                      ? 'Data forwarding enabled'
-                      : 'Data forwarding disabled'}
+                      ? "Data forwarding enabled"
+                      : "Data forwarding disabled"}
                   </span>
                 </div>
               </>
             ) : (
-              <div className='flex items-center text-sm'>
-                <Zap className='w-4 h-4 mr-2 text-green-500' />
+              <div className="flex items-center text-sm">
+                <Zap className="w-4 h-4 mr-2 text-green-500" />
                 <span>No hazards detected - clean pipeline execution</span>
               </div>
             )}
@@ -278,45 +273,49 @@ export function InstructionInput({
         )}
 
         {hasStarted && !stallsEnabled && (
-          <div className='flex items-center gap-1 p-2 bg-muted rounded text-sm'>
-            <StopCircle className='w-4 h-4 text-blue-500' />
+          <div className="flex items-center gap-1 p-2 bg-muted rounded text-sm">
+            <StopCircle className="w-4 h-4 text-blue-500" />
             <span>Ideal pipeline - no hazard detection active</span>
           </div>
         )}
 
-        <div className='flex justify-between items-center gap-2'>
-          {/* Start Button: Disabled if started and not finished */}
+        <div className="flex justify-between items-center gap-2">
           <Button
-            onClick={handleSubmit}
-            disabled={disableInputAndStart}
-            className='flex-1'
+            onClick={() => {
+              if (isFinished) {
+                handleSubmit();
+                rerunSimulation();
+              } else {
+                handleSubmit();
+              }
+            }}
+            disabled={disableInputAndStart /*|| isFinished*/}
+            className="flex-1"
           >
             {isFinished
-              ? 'Finished'
+              ? "Finished"
               : hasStarted
-              ? 'Running...'
-              : 'Start Simulation'}
+              ? "Running..."
+              : "Start Simulation"}
           </Button>
 
-          {/* Conditional Play/Pause Button: Show only when pause/resume is possible */}
           {canPauseResume && (
             <Button
-              variant='outline'
+              variant="outline"
               onClick={handlePauseResume}
-              size='icon'
-              aria-label={isRunning ? 'Pause Simulation' : 'Resume Simulation'}
+              size="icon"
+              aria-label={isRunning ? "Pause Simulation" : "Resume Simulation"}
             >
               {isRunning ? <Pause /> : <Play />}
             </Button>
           )}
 
-          {/* Reset Button: Show only if the simulation has started */}
           {hasStarted && (
             <Button
-              variant='destructive'
+              variant="destructive"
               onClick={onReset}
-              size='icon'
-              aria-label='Reset Simulation'
+              size="icon"
+              aria-label="Reset Simulation"
             >
               <RotateCcw />
             </Button>
