@@ -359,10 +359,10 @@ function handleBranchAtID(
     branchMode: SimulationState["branchMode"];
     initialPrediction: boolean;
     failThreshold: number;
-    branchPredictionState: Record<number, BranchPredictionEntry>;
+    branchPredictionState: Record<string, BranchPredictionEntry>;
     branchOutcome: Record<number, boolean>;
   },
-  newBranchPredictionState: Record<number, BranchPredictionEntry>,
+  newBranchPredictionState: Record<string, BranchPredictionEntry>,
   newBranchOutcome: Record<number, boolean>,
   branchMissCountRef: { value: number }
 ) {
@@ -376,8 +376,8 @@ function handleBranchAtID(
     } else if (state.branchMode === "ALWAYS_NOT_TAKEN") {
       predictedTaken = false;
     } else {
-      // MOOD STATE_MACHINE
-      const prevEntry = state.branchPredictionState[idx] ?? {
+      // STATE_MACHINE: using "global" key
+      const prevEntry = state.branchPredictionState["global"] ?? {
         currentBit: state.initialPrediction,
         missStreak: 0,
       };
@@ -404,9 +404,9 @@ function handleBranchAtID(
       branchMissCountRef.value += 1;
     }
 
-    // 4) In STATE_MACHINE, update the fault counter and bit
+    // 4) In STATE_MACHINE, update the prediction state
     if (state.branchMode === "STATE_MACHINE") {
-      const prevEntry = state.branchPredictionState[idx] ?? {
+      const prevEntry = state.branchPredictionState["global"] ?? {
         currentBit: state.initialPrediction,
         missStreak: 0,
       };
@@ -414,24 +414,20 @@ function handleBranchAtID(
       let newMissStreak = prevEntry.missStreak;
 
       if (!wasCorrect) {
-        // Prediction failed: we increased missStreak
         newMissStreak = prevEntry.missStreak + 1;
         if (newMissStreak >= state.failThreshold) {
-          // If it reached the threshold, we invert the bit and reset missStreak
-          newBranchPredictionState[idx] = {
+          newBranchPredictionState["global"] = {
             currentBit: !prevEntry.currentBit,
             missStreak: 0,
           };
         } else {
-          // We increase the streak, but do not change the bit
-          newBranchPredictionState[idx] = {
+          newBranchPredictionState["global"] = {
             currentBit: prevEntry.currentBit,
             missStreak: newMissStreak,
           };
         }
       } else {
-        // Correct prediction: reset missStreak, keep the bit
-        newBranchPredictionState[idx] = {
+        newBranchPredictionState["global"] = {
           currentBit: prevEntry.currentBit,
           missStreak: 0,
         };
