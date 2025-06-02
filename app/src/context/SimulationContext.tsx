@@ -370,13 +370,20 @@ const registerNumberToName: Record<number, string> = {
   31: "$ra",
 };
 
-const branchHistory: Record<number, { taken: boolean; misses: number }> = {};
+const clearBranchHistory = () => {
+  for (const key in branchHistory) {
+    delete branchHistory[key];
+  }
+};
+
+const branchHistory: Record<string, { taken: boolean }> = {};
+const evaluatedThisCycle = new Set<number>();
+let consecutiveMisses = 0;
 
 const calculateNextState = (currentState: SimulationState): SimulationState => {
   if (!currentState.isRunning || currentState.isFinished) {
     return currentState;
   }
-
   const nextCycle = currentState.currentCycle + 1;
   const newInstructionStages: Record<number, number | null> = {};
   let newStallCycles = currentState.currentStallCycles;
@@ -406,7 +413,8 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
 
       if (stageIndex === 1) {
         const usage = currentState.registerUsage[index];
-        if (usage.isBranch) {
+        if (usage.isBranch && !evaluatedThisCycle.has(index)) {
+          evaluatedThisCycle.add(index);
           const snapshot = currentState.registerSnapshots[index];
           /*console.log(usage);
           console.log(snapshot);
@@ -432,7 +440,7 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
               predictedTaken = false;
               break;
             case "STATE_MACHINE": {
-              const history = branchHistory[index];
+              const history = branchHistory["global"];
               const defaultTaken =
                 currentState.stateMachineConfig.initialPrediction === "TAKEN";
               predictedTaken = history ? history.taken : defaultTaken;
@@ -451,6 +459,7 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
 
           const wasMiss = predictedTaken !== actualTaken;
           if (wasMiss) {
+            consecutiveMisses++;
             updatedBranchMisses[index] = true;
             console.log(
               `❌ MISPREDICT at instruction ${index} (cycle ${nextCycle}):`,
@@ -462,28 +471,28 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
               }
             );
           } else {
-            console.log('Prediccion correcta')
+            console.log("Prediccion correcta");
           }
 
           if (currentState.predictionMode === "STATE_MACHINE") {
             const config = currentState.stateMachineConfig;
-            const current = branchHistory[index] ?? {
+            const current = branchHistory["global"] ?? {
               taken: config.initialPrediction === "TAKEN",
-              misses: 0,
             };
 
-            const nextMisses = wasMiss ? current.misses + 1 : 0;
-            const shouldFlip = nextMisses >= config.missThreshold;
+            //const nextMisses = wasMiss ? current.misses + 1 : current.misses;
+            const shouldFlip = consecutiveMisses >= config.missThreshold;
             const nextTaken = shouldFlip ? !current.taken : current.taken;
-
-            branchHistory[index] = {
-              taken: nextTaken,
-              misses: nextMisses,
-            };
+            //const resetMisses = shouldFlip ? 0 : nextMisses;*/
+            console.log;
+            if (shouldFlip) {
+              consecutiveMisses = 0;
+            }
+            branchHistory["global"] = { taken: nextTaken };
 
             console.log(`🔁 Predictor for [${index}]:`, {
               newPrediction: nextTaken,
-              consecutiveMisses: nextMisses,
+              numFallos: consecutiveMisses,
             });
           }
         }
@@ -543,6 +552,9 @@ export function SimulationProvider({ children }: PropsWithChildren) {
 
   const resetSimulation = useCallback(() => {
     clearTimer();
+    clearBranchHistory();
+    evaluatedThisCycle.clear();
+    consecutiveMisses = 0;
     setSimulationState((prevState) => ({
       ...initialState,
       forwardingEnabled: prevState.forwardingEnabled,

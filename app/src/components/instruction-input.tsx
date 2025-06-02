@@ -161,7 +161,6 @@ export function InstructionInput({
       }, 50);
     }
   };
-  console.log("Prediction Mode actual:", predictionMode);
 
   return (
     
