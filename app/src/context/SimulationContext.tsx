@@ -75,6 +75,7 @@ interface SimulationState {
 
   aluResults: Record<number, number>;
   loadedFromMem: Record<number, number>;
+  branchPredictionEnabled: boolean; // Add branch prediction enabled flag
   branchMode: "ALWAYS_TAKEN" | "ALWAYS_NOT_TAKEN" | "STATE_MACHINE"; // Add branch prediction mode
   initialPrediction: boolean; // Initial prediction state for branch instructions
   failThreshold: number; // Threshold for branch prediction failure
@@ -91,6 +92,7 @@ interface SimulationActions {
   resumeSimulation: () => void;
   setForwardingEnabled: (enabled: boolean) => void;
   setStallsEnabled: (enabled: boolean) => void;
+  setBranchPredictionEnabled: (enabled: boolean) => void;
   setBranchMode: (mode: SimulationState["branchMode"]) => void;
   setStateMachineConfig: (
     initialPrediction: boolean,
@@ -129,6 +131,7 @@ const initialState: SimulationState = {
   aluResults: {},
   loadedFromMem: {},
 
+  branchPredictionEnabled: false, // Branch prediction disabled by default
   branchMode: "ALWAYS_NOT_TAKEN", // Default branch prediction mode
   initialPrediction: false, // false (Not Taken) by default
   failThreshold: 1,
@@ -355,6 +358,7 @@ function handleBranchAtID(
   state: {
     registerUsage: Record<number, RegisterUsage>;
     registerFile: number[];
+    branchPredictionEnabled: boolean;
     branchMode: SimulationState["branchMode"];
     initialPrediction: boolean;
     failThreshold: number;
@@ -368,6 +372,13 @@ function handleBranchAtID(
   const usage = state.registerUsage[idx];
   // BEQ (opcode 4) and BNE (opcode 5) are the only branch instructions
   if (usage.type === "I" && (usage.opcode === 4 || usage.opcode === 5)) {
+    // If branch prediction is disabled, skip prediction logic
+    if (!state.branchPredictionEnabled) {
+      // Still mark as correct (no prediction made, no miss)
+      newBranchOutcome[idx] = true;
+      return;
+    }
+
     // 1) Determine the prediction (predictedTaken)
     let predictedTaken: boolean;
     if (state.branchMode === "ALWAYS_TAKEN") {
@@ -588,13 +599,15 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
           newAluResults[idx] = rsVal + imm;
         }
       }
-    } // ID_STAGE is before EX_STAGE
+    }
+    // ID_STAGE is before EX_STAGE
     if (newStage === ID_STAGE && (prevStage === null || prevStage < ID_STAGE)) {
       handleBranchAtID(
         idx,
         {
           registerUsage: currentState.registerUsage,
           registerFile: newRegisterFile,
+          branchPredictionEnabled: currentState.branchPredictionEnabled,
           branchMode: currentState.branchMode,
           initialPrediction: currentState.initialPrediction,
           failThreshold: currentState.failThreshold,
@@ -669,13 +682,16 @@ export function SimulationProvider({ children }: PropsWithChildren) {
       });
     }, 1000);
   }, [simulationState.isRunning, simulationState.isFinished]);
-
   const resetSimulation = useCallback(() => {
     clearTimer();
     setSimulationState((prevState) => ({
       ...initialState,
       forwardingEnabled: prevState.forwardingEnabled,
       stallsEnabled: prevState.stallsEnabled,
+      branchPredictionEnabled: prevState.branchPredictionEnabled,
+      branchMode: prevState.branchMode,
+      initialPrediction: prevState.initialPrediction,
+      failThreshold: prevState.failThreshold,
     }));
   }, []);
 
@@ -720,7 +736,6 @@ export function SimulationProvider({ children }: PropsWithChildren) {
           initialStages[index] = null;
         }
       });
-
       setSimulationState((prev) => ({
         instructions: submittedInstructions,
         currentCycle: 1,
@@ -745,6 +760,7 @@ export function SimulationProvider({ children }: PropsWithChildren) {
         loadedFromMem: {},
 
         // Branch prediction settings
+        branchPredictionEnabled: prev.branchPredictionEnabled,
         branchMode: prev.branchMode,
         initialPrediction: prev.initialPrediction,
         failThreshold: prev.failThreshold,
@@ -759,6 +775,7 @@ export function SimulationProvider({ children }: PropsWithChildren) {
       resetSimulation,
       simulationState.forwardingEnabled,
       simulationState.stallsEnabled,
+      simulationState.branchPredictionEnabled,
     ]
   );
 
@@ -790,10 +807,21 @@ export function SimulationProvider({ children }: PropsWithChildren) {
       return { ...prevState, forwardingEnabled: enabled };
     });
   };
-
   const setStallsEnabled = (enabled: boolean) => {
     setSimulationState((prevState) => {
       return { ...prevState, stallsEnabled: enabled };
+    });
+  };
+
+  const setBranchPredictionEnabled = (enabled: boolean) => {
+    setSimulationState((prevState) => {
+      return {
+        ...prevState,
+        branchPredictionEnabled: enabled,
+        branchPredictionState: {},
+        branchOutcome: {},
+        branchMissCount: 0,
+      };
     });
   };
 
@@ -829,7 +857,6 @@ export function SimulationProvider({ children }: PropsWithChildren) {
     }
     return clearTimer;
   }, [simulationState.isRunning, simulationState.isFinished, runClock]);
-
   const actionsValue: SimulationActions = useMemo(
     () => ({
       startSimulation,
@@ -838,6 +865,7 @@ export function SimulationProvider({ children }: PropsWithChildren) {
       resumeSimulation,
       setForwardingEnabled,
       setStallsEnabled,
+      setBranchPredictionEnabled,
       setBranchMode,
       setStateMachineConfig,
     }),
@@ -848,6 +876,7 @@ export function SimulationProvider({ children }: PropsWithChildren) {
       resumeSimulation,
       setForwardingEnabled,
       setStallsEnabled,
+      setBranchPredictionEnabled,
       setBranchMode,
       setStateMachineConfig,
     ]

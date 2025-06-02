@@ -23,6 +23,7 @@ import {
   AlertTriangle,
   Zap,
   StopCircle,
+  Target,
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 
@@ -41,16 +42,15 @@ export function InstructionInput({
 }: InstructionInputProps) {
   const [inputText, setInputText] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
-
   const {
     pauseSimulation,
     resumeSimulation,
     setForwardingEnabled,
     setStallsEnabled,
+    setBranchPredictionEnabled,
     setBranchMode,
     setStateMachineConfig,
   } = useSimulationActions();
-
   const {
     currentCycle,
     isFinished,
@@ -59,10 +59,13 @@ export function InstructionInput({
     stalls,
     forwardingEnabled,
     stallsEnabled,
+    branchPredictionEnabled,
     forwardings,
     branchMode,
     initialPrediction,
     failThreshold,
+    branchOutcome,
+    branchMissCount,
   } = useSimulationState();
 
   useEffect(() => {
@@ -75,7 +78,6 @@ export function InstructionInput({
   const disableInputAndStart = hasStarted && !isFinished;
   // Block configuration changes if the simulation is finished
   const configDisabled = isFinished;
-
   // Count hazards and stalls
   const hazardCount = Object.values(hazards).filter(
     (h) => h.type !== "NONE"
@@ -84,6 +86,15 @@ export function InstructionInput({
   const forwardingCount = Object.values(forwardings).filter(
     (f) => f.length > 0
   ).length;
+
+  // Count branch instructions and prediction statistics
+  const branchInstructions = Object.values(branchOutcome).length;
+  const correctPredictions =
+    Object.values(branchOutcome).filter(Boolean).length;
+  const predictionAccuracy =
+    branchInstructions > 0
+      ? ((correctPredictions / branchInstructions) * 100).toFixed(1)
+      : "N/A";
 
   const handleSubmit = () => {
     setError(null);
@@ -127,7 +138,6 @@ export function InstructionInput({
     if (isFinished) return;
     setForwardingEnabled(checked);
   };
-
   // Function to handle the change of stalls
   const handleStallsChange = (checked: boolean) => {
     if (isFinished) return;
@@ -137,6 +147,12 @@ export function InstructionInput({
     if (!checked) {
       setForwardingEnabled(false);
     }
+  };
+
+  // Function to handle the change of branch prediction
+  const handleBranchPredictionChange = (checked: boolean) => {
+    if (isFinished) return;
+    setBranchPredictionEnabled(checked);
   };
 
   const handleBranchModeChange = (
@@ -193,7 +209,6 @@ export function InstructionInput({
         {/* Pipeline configuration switches */}
         <div className="space-y-3 p-3 bg-muted/50 rounded-lg">
           <h4 className="text-sm font-medium">Pipeline Configuration</h4>
-
           {/* Stalls and hazard detection switch */}
           <div className="flex items-center space-x-2">
             <Switch
@@ -206,7 +221,6 @@ export function InstructionInput({
               Enable Hazard Detection & Stalls
             </Label>
           </div>
-
           {/* Forwarding configuration switch - only available if stalls are enabled */}
           <div className="flex items-center space-x-2">
             <Switch
@@ -225,80 +239,102 @@ export function InstructionInput({
             >
               Enable Data Forwarding
             </Label>
-          </div>
-
+          </div>{" "}
           {!stallsEnabled && (
             <p className="text-xs text-muted-foreground">
               When hazard detection is disabled, all instructions execute in
               ideal 5-stage pipeline without stalls or forwarding.
             </p>
           )}
-
-          {/* Branch prediction mode selection */}
+          {/* Branch prediction enable/disable switch */}
           <div className="pt-2 border-t border-muted">
-            <h4 className="text-sm font-medium">Branch Prediction Mode</h4>
-            <div className="mt-2 grid gap-2">
-              <select
-                className="border rounded px-2 py-1 text-sm"
-                value={branchMode}
-                onChange={(e) => handleBranchModeChange(e.target.value as any)}
-                disabled={disableInputAndStart || configDisabled} // actualizado
-              >
-                <option value="ALWAYS_TAKEN">Always Taken</option>
-                <option value="ALWAYS_NOT_TAKEN">Always Not Taken</option>
-                <option value="STATE_MACHINE">State Machine</option>
-              </select>
-
-              {branchMode === "STATE_MACHINE" && (
-                <div className="space-y-2">
-                  {/* Predicción inicial (radio buttons) */}
-                  <div className="flex items-center space-x-4">
-                    <Label className="text-sm">Initial Prediction:</Label>
-                    <label className="flex items-center space-x-1 text-sm">
-                      <input
-                        type="radio"
-                        name="initialPred"
-                        className="w-4 h-4"
-                        checked={initialPrediction === true}
-                        onChange={() => handleInitialPredictionChange(true)}
-                        disabled={disableInputAndStart || configDisabled}
-                      />
-                      <span>Taken</span>
-                    </label>
-                    <label className="flex items-center space-x-1 text-sm">
-                      <input
-                        type="radio"
-                        name="initialPred"
-                        className="w-4 h-4"
-                        checked={initialPrediction === false}
-                        onChange={() => handleInitialPredictionChange(false)}
-                        disabled={disableInputAndStart || configDisabled}
-                      />
-                      <span>Not Taken</span>
-                    </label>
-                  </div>
-
-                  {/* Fail threshold */}
-                  <div className="flex items-center space-x-2">
-                    <Label htmlFor="failThreshold" className="text-sm">
-                      Fail Threshold:
-                    </Label>
-                    <input
-                      id="failThreshold"
-                      type="number"
-                      min={1}
-                      className="border rounded w-16 px-2 py-1 text-sm"
-                      value={failThreshold}
-                      onChange={(e) =>
-                        handleFailThresholdChange(Number(e.target.value))
-                      }
-                      disabled={disableInputAndStart || configDisabled}
-                    />
-                  </div>
-                </div>
-              )}
+            <div className="flex items-center space-x-2">
+              <Switch
+                id="branch-prediction-mode"
+                checked={branchPredictionEnabled}
+                onCheckedChange={handleBranchPredictionChange}
+                disabled={disableInputAndStart || configDisabled}
+              />
+              <Label htmlFor="branch-prediction-mode" className="text-sm">
+                Enable Branch Prediction
+              </Label>
             </div>
           </div>
+          {/* Branch prediction mode selection - only available if branch prediction is enabled */}
+          {branchPredictionEnabled && (
+            <div className="border-t border-muted pt-2">
+              <h4 className="text-sm font-medium">Branch Prediction Mode</h4>
+              <div className="mt-2 grid gap-2">
+                {" "}
+                <select
+                  className="border rounded px-2 py-1 text-sm"
+                  value={branchMode}
+                  onChange={(e) =>
+                    handleBranchModeChange(e.target.value as any)
+                  }
+                  disabled={disableInputAndStart || configDisabled}
+                >
+                  <option value="ALWAYS_TAKEN">Always Taken</option>
+                  <option value="ALWAYS_NOT_TAKEN">Always Not Taken</option>
+                  <option value="STATE_MACHINE">State Machine</option>
+                </select>
+                {branchMode === "STATE_MACHINE" && (
+                  <div className="space-y-2">
+                    {/* Predicción inicial (radio buttons) */}
+                    <div className="flex items-center space-x-4">
+                      <Label className="text-sm">Initial Prediction:</Label>
+                      <label className="flex items-center space-x-1 text-sm">
+                        <input
+                          type="radio"
+                          name="initialPred"
+                          className="w-4 h-4"
+                          checked={initialPrediction === true}
+                          onChange={() => handleInitialPredictionChange(true)}
+                          disabled={disableInputAndStart || configDisabled}
+                        />
+                        <span>Taken</span>
+                      </label>
+                      <label className="flex items-center space-x-1 text-sm">
+                        <input
+                          type="radio"
+                          name="initialPred"
+                          className="w-4 h-4"
+                          checked={initialPrediction === false}
+                          onChange={() => handleInitialPredictionChange(false)}
+                          disabled={disableInputAndStart || configDisabled}
+                        />
+                        <span>Not Taken</span>
+                      </label>
+                    </div>
+
+                    {/* Fail threshold */}
+                    <div className="flex items-center space-x-2">
+                      <Label htmlFor="failThreshold" className="text-sm">
+                        Fail Threshold:
+                      </Label>
+                      <input
+                        id="failThreshold"
+                        type="number"
+                        min={1}
+                        className="border rounded w-16 px-2 py-1 text-sm"
+                        value={failThreshold}
+                        onChange={(e) =>
+                          handleFailThresholdChange(Number(e.target.value))
+                        }
+                        disabled={disableInputAndStart || configDisabled}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+          {!branchPredictionEnabled && (
+            <p className="text-xs text-muted-foreground">
+              When branch prediction is disabled, branch instructions execute
+              without prediction logic.
+            </p>
+          )}
         </div>
 
         {/* Show hazard statistics if simulation has started */}
@@ -321,7 +357,7 @@ export function InstructionInput({
                     <AlertTriangle className="w-4 h-4 mr-2 text-red-500" />
                     <span>{stallCount} stall cycles added</span>
                   </div>
-                )}
+                )}{" "}
                 <div className="flex items-center text-sm">
                   <Zap className="w-4 h-4 mr-2 text-green-500" />
                   <span>
@@ -330,11 +366,37 @@ export function InstructionInput({
                       : "Data forwarding disabled"}
                   </span>
                 </div>
+                {branchPredictionEnabled && branchInstructions > 0 && (
+                  <div className="flex items-center text-sm">
+                    <Target className="w-4 h-4 mr-2 text-blue-500" />
+                    <span>
+                      Branch prediction: {correctPredictions}/
+                      {branchInstructions} correct ({predictionAccuracy}%)
+                    </span>
+                  </div>
+                )}
+                {branchPredictionEnabled && branchMissCount > 0 && (
+                  <div className="flex items-center text-sm">
+                    <AlertTriangle className="w-4 h-4 mr-2 text-orange-500" />
+                    <span>{branchMissCount} branch mispredictions</span>
+                  </div>
+                )}
               </>
             ) : (
               <div className="flex items-center text-sm">
                 <Zap className="w-4 h-4 mr-2 text-green-500" />
                 <span>No hazards detected - clean pipeline execution</span>
+              </div>
+            )}
+            {branchPredictionEnabled && (
+              <div className="flex items-center text-sm">
+                <Target className="w-4 h-4 mr-2 text-blue-500" />
+                <span>
+                  Branch prediction:{" "}
+                  {branchPredictionEnabled
+                    ? `${branchMode.toLowerCase().replace("_", " ")}`
+                    : "disabled"}
+                </span>
               </div>
             )}
           </div>

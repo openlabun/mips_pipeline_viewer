@@ -51,6 +51,7 @@ export function PipelineVisualization() {
     forwardingEnabled,
     branchOutcome,
     branchMissCount,
+    branchPredictionEnabled,
   } = useSimulationState();
 
   // Use maxCycles for the number of columns if it's calculated, otherwise 0
@@ -206,20 +207,22 @@ export function PipelineVisualization() {
                         {registerUsage[instIndex].rd !== 0 &&
                           `, rd=$${registerUsage[instIndex].rd}`}
                       </div>
-                    )}
-                    {typeof branchOutcome[instIndex] === "boolean" && (
-                      <div className="flex items-center gap-1 mt-1">
-                        {branchOutcome[instIndex] ? (
-                          <span className="flex items-center text-green-600 text-xs">
-                            <CheckCircle className="w-4 h-4 mr-1" /> Branch HIT
-                          </span>
-                        ) : (
-                          <span className="flex items-center text-red-600 text-xs">
-                            <XCircle className="w-4 h-4 mr-1" /> Branch MISS
-                          </span>
-                        )}
-                      </div>
-                    )}
+                    )}{" "}
+                    {branchPredictionEnabled &&
+                      typeof branchOutcome[instIndex] === "boolean" && (
+                        <div className="flex items-center gap-1 mt-1">
+                          {branchOutcome[instIndex] ? (
+                            <span className="flex items-center text-green-600 text-xs">
+                              <CheckCircle className="w-4 h-4 mr-1" /> Branch
+                              HIT
+                            </span>
+                          ) : (
+                            <span className="flex items-center text-red-600 text-xs">
+                              <XCircle className="w-4 h-4 mr-1" /> Branch MISS
+                            </span>
+                          )}
+                        </div>
+                      )}
                   </TableCell>
 
                   {/* Hazard information or instruction type */}
@@ -364,7 +367,6 @@ export function PipelineVisualization() {
             </TableBody>
           </Table>
         </div>
-
         {/* Legend */}
         <div className="flex flex-wrap gap-4 mt-4 text-sm">
           <div className="flex items-center">
@@ -387,8 +389,8 @@ export function PipelineVisualization() {
               </div>
             </>
           )}
-        </div>
-        {branchMissCount > 0 && (
+        </div>{" "}
+        {branchPredictionEnabled && branchMissCount > 0 && (
           <div className="mt-4 text-sm text-red-600">
             Total branch misses: <strong>{branchMissCount}</strong>
           </div>
