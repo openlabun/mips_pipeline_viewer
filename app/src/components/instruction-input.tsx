@@ -60,10 +60,9 @@ export function InstructionInput({
     forwardingEnabled,
     stallsEnabled,
     forwardings,
-
-    branchMode, // "ALWAYS_TAKEN" | "ALWAYS_NOT_TAKEN" | "STATE_MACHINE"
-    initialPrediction, // boolean: true=Taken / false=Not Taken
-    failThreshold, // total misses before switching prediction
+    branchMode,
+    initialPrediction,
+    failThreshold,
   } = useSimulationState();
 
   useEffect(() => {
@@ -73,10 +72,9 @@ export function InstructionInput({
   }, [instructions]);
 
   const hasStarted = currentCycle > 0;
-  // Can only pause/resume if started and not finished
-  const canPauseResume = hasStarted && !isFinished;
-  // Input/Start button should be disabled if simulation has started and isn't finished
   const disableInputAndStart = hasStarted && !isFinished;
+  // Block configuration changes if the simulation is finished
+  const configDisabled = isFinished;
 
   // Count hazards and stalls
   const hazardCount = Object.values(hazards).filter(
@@ -126,124 +124,42 @@ export function InstructionInput({
 
   // Function to handle the change of forwarding
   const handleForwardingChange = (checked: boolean) => {
+    if (isFinished) return;
     setForwardingEnabled(checked);
-
-    // If the simulation has finished, restart it with the new configuration
-    if (hasStarted && isFinished) {
-      setTimeout(() => {
-        onReset();
-        setTimeout(() => {
-          const currentInstructions = inputText
-            .trim()
-            .split("\n")
-            .map((line) => line.trim())
-            .filter((line) => line.length > 0);
-
-          if (currentInstructions.length > 0) {
-            onInstructionsSubmit(currentInstructions);
-          }
-        }, 50);
-      }, 50);
-    }
   };
 
   // Function to handle the change of stalls
   const handleStallsChange = (checked: boolean) => {
+    if (isFinished) return;
     setStallsEnabled(checked);
 
-    // If stalls are disabled, also disable forwarding since it doesn't make sense
+    // Deshabilitar forwarding si se desactivan stalls
     if (!checked) {
       setForwardingEnabled(false);
-    }
-
-    // If the simulation has finished, restart it with the new configuration
-    if (hasStarted && isFinished) {
-      setTimeout(() => {
-        onReset();
-        setTimeout(() => {
-          const currentInstructions = inputText
-            .trim()
-            .split("\n")
-            .map((line) => line.trim())
-            .filter((line) => line.length > 0);
-
-          if (currentInstructions.length > 0) {
-            onInstructionsSubmit(currentInstructions);
-          }
-        }, 50);
-      }, 50);
     }
   };
 
   const handleBranchModeChange = (
     mode: "ALWAYS_TAKEN" | "ALWAYS_NOT_TAKEN" | "STATE_MACHINE"
   ) => {
+    if (isFinished) return;
     setBranchMode(mode);
 
     if (mode !== "STATE_MACHINE") {
-      // Limpiaremos el estado de parámetros si no es state-machine
+      // Clear state machine config if switching away
       setStateMachineConfig(false, 1);
-    }
-
-    if (hasStarted && isFinished) {
-      setTimeout(() => {
-        onReset();
-        setTimeout(() => {
-          const currentInstructions = inputText
-            .trim()
-            .split("\n")
-            .map((line) => line.trim())
-            .filter((line) => line.length > 0);
-
-          if (currentInstructions.length > 0) {
-            onInstructionsSubmit(currentInstructions);
-          }
-        }, 50);
-      }, 50);
     }
   };
 
   const handleInitialPredictionChange = (taken: boolean) => {
+    if (isFinished) return;
     setStateMachineConfig(taken, failThreshold);
-
-    if (hasStarted && isFinished) {
-      setTimeout(() => {
-        onReset();
-        setTimeout(() => {
-          const currentInstructions = inputText
-            .trim()
-            .split("\n")
-            .map((line) => line.trim())
-            .filter((line) => line.length > 0);
-
-          if (currentInstructions.length > 0) {
-            onInstructionsSubmit(currentInstructions);
-          }
-        }, 50);
-      }, 50);
-    }
   };
 
   const handleFailThresholdChange = (value: number) => {
+    if (isFinished) return;
     const threshold = Math.max(1, value);
     setStateMachineConfig(initialPrediction, threshold);
-
-    if (hasStarted && isFinished) {
-      setTimeout(() => {
-        onReset();
-        setTimeout(() => {
-          const currentInstructions = inputText
-            .trim()
-            .split("\n")
-            .map((line) => line.trim())
-            .filter((line) => line.length > 0);
-
-          if (currentInstructions.length > 0) {
-            onInstructionsSubmit(currentInstructions);
-          }
-        }, 50);
-      }, 50);
-    }
   };
 
   return (
@@ -284,7 +200,7 @@ export function InstructionInput({
               id="stalls-mode"
               checked={stallsEnabled}
               onCheckedChange={handleStallsChange}
-              disabled={disableInputAndStart}
+              disabled={disableInputAndStart || configDisabled} // actualizado
             />
             <Label htmlFor="stalls-mode" className="text-sm">
               Enable Hazard Detection & Stalls
@@ -297,7 +213,9 @@ export function InstructionInput({
               id="forwarding-mode"
               checked={forwardingEnabled && stallsEnabled}
               onCheckedChange={handleForwardingChange}
-              disabled={disableInputAndStart || !stallsEnabled}
+              disabled={
+                disableInputAndStart || configDisabled || !stallsEnabled
+              }
             />
             <Label
               htmlFor="forwarding-mode"
@@ -324,7 +242,7 @@ export function InstructionInput({
                 className="border rounded px-2 py-1 text-sm"
                 value={branchMode}
                 onChange={(e) => handleBranchModeChange(e.target.value as any)}
-                disabled={disableInputAndStart}
+                disabled={disableInputAndStart || configDisabled} // actualizado
               >
                 <option value="ALWAYS_TAKEN">Always Taken</option>
                 <option value="ALWAYS_NOT_TAKEN">Always Not Taken</option>
@@ -343,7 +261,7 @@ export function InstructionInput({
                         className="w-4 h-4"
                         checked={initialPrediction === true}
                         onChange={() => handleInitialPredictionChange(true)}
-                        disabled={disableInputAndStart}
+                        disabled={disableInputAndStart || configDisabled}
                       />
                       <span>Taken</span>
                     </label>
@@ -354,7 +272,7 @@ export function InstructionInput({
                         className="w-4 h-4"
                         checked={initialPrediction === false}
                         onChange={() => handleInitialPredictionChange(false)}
-                        disabled={disableInputAndStart}
+                        disabled={disableInputAndStart || configDisabled}
                       />
                       <span>Not Taken</span>
                     </label>
@@ -374,7 +292,7 @@ export function InstructionInput({
                       onChange={(e) =>
                         handleFailThresholdChange(Number(e.target.value))
                       }
-                      disabled={disableInputAndStart}
+                      disabled={disableInputAndStart || configDisabled}
                     />
                   </div>
                 </div>
@@ -444,7 +362,7 @@ export function InstructionInput({
           </Button>
 
           {/* Conditional Play/Pause Button: Show only when pause/resume is possible */}
-          {canPauseResume && (
+          {hasStarted && !isFinished && (
             <Button
               variant="outline"
               onClick={handlePauseResume}
