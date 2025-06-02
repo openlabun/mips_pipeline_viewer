@@ -20,9 +20,9 @@ type StageName = (typeof STAGE_NAMES)[number];
 
 type InstructionType = "R" | "I" | "J";
 type HazardType = "RAW" | "WAW" | "NONE";
-type PredictionMode = "TAKEN" | "NOT_TAKEN" | "STATE_MACHINE";
+export type PredictionMode = "TAKEN" | "NOT_TAKEN" | "STATE_MACHINE";
 
-interface StateMachineConfig {
+export interface StateMachineConfig {
   missThreshold: number;
   initialPrediction: "TAKEN" | "NOT_TAKEN";
 }
@@ -90,6 +90,7 @@ interface SimulationActions {
   setStallsEnabled: (enabled: boolean) => void; // Add this new action
   setPredictionMode: (mode: PredictionMode) => void;
   setStateMachineConfig: (config: StateMachineConfig) => void;
+  rerunSimulation: () => void;
 }
 
 // Create the contexts
@@ -376,9 +377,10 @@ const clearBranchHistory = () => {
   }
 };
 
-const branchHistory: Record<string, { taken: boolean }> = {};
+export const branchHistory: Record<string, { taken: boolean }> = {};
 const evaluatedThisCycle = new Set<number>();
 let consecutiveMisses = 0;
+export let totalMisses = 0;
 
 const calculateNextState = (currentState: SimulationState): SimulationState => {
   if (!currentState.isRunning || currentState.isFinished) {
@@ -460,6 +462,7 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
           const wasMiss = predictedTaken !== actualTaken;
           if (wasMiss) {
             consecutiveMisses++;
+            totalMisses++;
             updatedBranchMisses[index] = true;
             console.log(
               `❌ MISPREDICT at instruction ${index} (cycle ${nextCycle}):`,
@@ -484,16 +487,14 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
             const shouldFlip = consecutiveMisses >= config.missThreshold;
             const nextTaken = shouldFlip ? !current.taken : current.taken;
             //const resetMisses = shouldFlip ? 0 : nextMisses;*/
-            console.log;
-            if (shouldFlip) {
-              consecutiveMisses = 0;
-            }
-            branchHistory["global"] = { taken: nextTaken };
-
             console.log(`🔁 Predictor for [${index}]:`, {
               newPrediction: nextTaken,
               numFallos: consecutiveMisses,
             });
+            if (shouldFlip) {
+              consecutiveMisses = 0;
+            }
+            branchHistory["global"] = { taken: nextTaken };
           }
         }
       }
@@ -555,6 +556,7 @@ export function SimulationProvider({ children }: PropsWithChildren) {
     clearBranchHistory();
     evaluatedThisCycle.clear();
     consecutiveMisses = 0;
+    totalMisses = 0;
     setSimulationState((prevState) => ({
       ...initialState,
       forwardingEnabled: prevState.forwardingEnabled,
@@ -644,6 +646,21 @@ export function SimulationProvider({ children }: PropsWithChildren) {
     ]
   );
 
+  const rerunSimulation = useCallback(() => {
+    clearTimer();
+    clearBranchHistory();
+    evaluatedThisCycle.clear();
+    consecutiveMisses = 0;
+    totalMisses = 0;
+
+    setSimulationState((prevState) => {
+      const prevInstructions = prevState.instructions;
+      // Volver a ejecutar la simulación como en startSimulation
+      startSimulation(prevInstructions);
+      return prevState;
+    });
+  }, [startSimulation]);
+
   const pauseSimulation = () => {
     setSimulationState((prevState) => {
       if (prevState.isRunning) {
@@ -715,6 +732,7 @@ export function SimulationProvider({ children }: PropsWithChildren) {
       setStallsEnabled,
       setPredictionMode,
       setStateMachineConfig,
+      rerunSimulation,
     }),
     [startSimulation, resetSimulation]
   );

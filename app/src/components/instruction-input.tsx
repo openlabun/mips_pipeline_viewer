@@ -74,6 +74,7 @@ export function InstructionInput({
   const hasStarted = currentCycle > 0;
   const canPauseResume = hasStarted && !isFinished;
   const disableInputAndStart = hasStarted && !isFinished;
+  const { rerunSimulation } = useSimulationActions();
 
   const hazardCount = Object.values(hazards).filter(
     (h) => h.type !== "NONE"
@@ -163,7 +164,6 @@ export function InstructionInput({
   };
 
   return (
-    
     <Card className="w-full max-w-md">
       <CardHeader>
         <CardTitle>MIPS Instructions</CardTitle>
@@ -281,8 +281,15 @@ export function InstructionInput({
 
         <div className="flex justify-between items-center gap-2">
           <Button
-            onClick={handleSubmit}
-            disabled={disableInputAndStart}
+            onClick={() => {
+              if (isFinished) {
+                handleSubmit();
+                rerunSimulation();
+              } else {
+                handleSubmit();
+              }
+            }}
+            disabled={disableInputAndStart /*|| isFinished*/}
             className="flex-1"
           >
             {isFinished
