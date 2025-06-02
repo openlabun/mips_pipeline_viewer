@@ -1,315 +1,317 @@
 'use client';
 
-import type * as React from 'react';
+import * as React from 'react';
+// ... (importaciones)
 import {
   Table, TableHeader, TableRow, TableHead, TableBody, TableCell, TableCaption,
 } from '@/components/ui/table';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import {
-  Download, Code2, Cpu, MemoryStick, CheckSquare,
-  AlertTriangle, Zap, ThumbsUp, ThumbsDown, GitBranch, XCircle, LucideProps, // Importar LucideProps
+  Download, Code2, Cpu, MemoryStick, CheckSquare, LucideProps,
+  AlertTriangle, Zap, ThumbsUp, ThumbsDown, GitBranch, XCircle,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { useSimulationState, type HazardType } from '@/context/SimulationContext';
+import { useSimulationState } from '@/context/SimulationContext';
 import { Badge } from '@/components/ui/badge';
-import type { ForwardRefExoticComponent, RefAttributes } from 'react'; // Para tipos de iconos
+import type { ForwardRefExoticComponent, RefAttributes } from 'react';
 
-// Definir tipo explícito para los elementos de STAGES
-type StageInfo = {
-  readonly name: "IF" | "ID" | "EX" | "MEM" | "WB";
-  readonly icon: ForwardRefExoticComponent<Omit<LucideProps, "ref"> & RefAttributes<SVGSVGElement>>;
-  readonly color: string;
+type StageNameUnion = "IF" | "ID" | "EX" | "MEM" | "WB";
+type IconComponentType = ForwardRefExoticComponent<Omit<LucideProps, "ref"> & RefAttributes<SVGSVGElement>>;
+
+const STAGE_ICONS: Readonly<Record<StageNameUnion, IconComponentType>> = {
+  IF: Download, ID: Code2, EX: Cpu, MEM: MemoryStick, WB: CheckSquare,
 };
+const STAGES_ARRAY = Object.keys(STAGE_ICONS) as StageNameUnion[]; // Para obtener índice por nombre
 
-const STAGES: readonly StageInfo[] = [ // Usar el tipo StageInfo
-  { name: 'IF', icon: Download, color: 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400' },
-  { name: 'ID', icon: Code2, color: 'bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400' },
-  { name: 'EX', icon: Cpu, color: 'bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400' },
-  { name: 'MEM', icon: MemoryStick, color: 'bg-teal-100 dark:bg-teal-900/30 text-teal-600 dark:text-teal-400' },
-  { name: 'WB', icon: CheckSquare, color: 'bg-pink-100 dark:bg-pink-900/30 text-pink-600 dark:text-pink-400' },
-] as const;
+type CellDisplayType = 'current' | 'completed' | 'stall' | 'forwarding' | 'branch-hit' | 'branch-miss' | 'flushed' | 'empty';
 
-const CELL_COLORS = {
-  stall: 'bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400',
-  mispredictStall: 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400',
-  forwarding: 'bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400',
-  branchHit: 'bg-sky-100 dark:bg-sky-900/30 text-sky-600 dark:text-sky-400',
-  branchMiss: 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400',
-  flushed: 'bg-gray-200 dark:bg-gray-700/30 text-gray-500 dark:text-gray-400',
+const CELL_STYLE_MAP: Readonly<Record<CellDisplayType, string>> = {
+  current: 'bg-primary text-primary-foreground',
+  completed: 'bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-400 opacity-80',
+  stall: 'bg-red-500 text-white',
+  forwarding: 'bg-green-500 text-white',
+  'branch-hit': 'bg-sky-500 text-white',
+  'branch-miss': 'bg-amber-500 text-white',
+  flushed: 'bg-gray-400 dark:bg-gray-600 text-gray-100 dark:text-gray-300',
   empty: 'bg-background',
 };
 
-interface CellState {
-  type: 'normal' | 'stall' | 'mispredictStall' | 'forwarding' | 'branch-hit' | 'branch-miss' | 'empty' | 'flushed';
-  stage: StageInfo | null; // Usar StageInfo aquí
-  isCurrentCell: boolean;
-  forwardingInfo?: any[]; // Debería ser un tipo más específico si es posible
-  hazardInfo?: any;      // Debería ser un tipo más específico si es posible
+interface CellRenderState {
+  displayType: CellDisplayType;
+  stageName: StageNameUnion | null;
+  icon?: IconComponentType;
+  isPulsing: boolean;
+  // hazardInfo?: any;
 }
-
 
 export function PipelineVisualization() {
   const {
-    instructions,
-    currentCycle: cycle,
-    maxCycles: contextMaxCycles,
-    isRunning,
-    instructionStages,
-    isFinished,
-    hazards,
-    forwardings,
-    stalls,
-    registerUsage,
-    stallsEnabled,
-    forwardingEnabled,
-    branchPredictionMode,
+    instructions, currentCycle, maxCycles: contextMaxCyclesFromCtx, isRunning, instructionStages,
+    isFinished, hazards, forwardings, stalls, registerUsage, stallsEnabled,
+    forwardingEnabled, branchPredictionMode, currentDataStallCycles,
+    branchMispredictActiveStallCycles,
   } = useSimulationState();
 
-  const calculateTotalPipelineCycles = () => {
-    // ... (lógica de calculateTotalPipelineCycles sin cambios) ...
+  // Usar el maxCycles del contexto si está disponible y es mayor, sino calcularlo
+  const finalMaxCycles = React.useMemo(() => {
     if (instructions.length === 0) return 0;
-    let maxCompletionCycle = 0;
-    for (let i = 0; i < instructions.length; i++) {
-      let entryCycleToIF = i + 1;
-      for (let k = 0; k < i; k++) {
-        if (stallsEnabled && stalls[k] && (hazards[k]?.type === 'RAW' || hazards[k]?.type === 'WAW')) {
-          entryCycleToIF += stalls[k];
+    let calculatedMax = 0;
+    // El cálculo de maxCycles en el contexto debería ser la fuente de verdad si es preciso
+    // Si no, el cálculo local es un fallback
+    if (contextMaxCyclesFromCtx && contextMaxCyclesFromCtx > 0) {
+        calculatedMax = contextMaxCyclesFromCtx;
+    } else {
+        // Fallback a un cálculo local si el contexto no lo provee bien
+        const numStages = STAGES_ARRAY.length;
+        for (let i = 0; i < instructions.length; i++) {
+            let entryCycleToIF = i + 1;
+            for (let k = 0; k < i; k++) {
+                entryCycleToIF += (stalls[k] || 0) + (hazards[k]?.type === 'Control' ? hazards[k].stallCycles : 0);
+            }
+            let completionCycleForI = entryCycleToIF + (numStages - 1);
+            if (stallsEnabled && stalls[i] && (hazards[i]?.type === 'RAW' || hazards[i]?.type === 'WAW')) {
+                completionCycleForI += stalls[i];
+            }
+            if (completionCycleForI > calculatedMax) calculatedMax = completionCycleForI;
         }
-        if (hazards[k]?.type === 'Control') {
-          entryCycleToIF += hazards[k].stallCycles;
+    }
+    // Asegurar que mostramos al menos hasta el ciclo actual si la simulación no ha terminado
+    // o si el cálculo es menor por alguna razón.
+    return Math.max(calculatedMax, currentCycle, instructions.length > 0 ? STAGES_ARRAY.length : 0);
+  }, [instructions, stalls, hazards, stallsEnabled, currentCycle, contextMaxCyclesFromCtx]);
+
+
+  const totalCyclesToDisplay = finalMaxCycles;
+  const cycleNumbers = Array.from({ length: totalCyclesToDisplay }, (_, i) => i + 1);
+  const branchMissCount = Object.values(hazards).filter(h => h?.type === 'Control').length; // Añadir '?' por si hazards[i] es undefined
+
+  const getCellStateForDisplay = (instIndex: number, displayCycleNum: number): CellRenderState => {
+    const regUsageInfo = registerUsage[instIndex];
+    const hazardInfo = hazards[instIndex]; // Hazard de esta instrucción
+    // Para ciclos pasados, necesitamos saber la etapa en la que *estaba* la instrucción.
+    // `instructionStages` solo nos da el estado del *currentCycle* del contexto.
+    // Esta es la limitación principal.
+    // La reconstrucción aquí será una aproximación.
+
+    let displayType: CellDisplayType = 'empty';
+    let cellStageName: StageNameUnion | null = null;
+    let cellIcon: IconComponentType | undefined = undefined;
+    const isPulsing = isRunning && !isFinished && displayCycleNum === currentCycle;
+
+    // 1. Reconstruir la etapa teórica de `instIndex` en `displayCycleNum`
+    let theoreticalStageName: StageNameUnion | null = null;
+    let isDataStallActiveForThisInstHere = false;
+    let isFlushedThisCycle = false;
+
+    if (instructions.length > 0 && instIndex < instructions.length) {
+        let entryCycleToIF = instIndex + 1;
+        for (let k = 0; k < instIndex; k++) {
+            entryCycleToIF += (stalls[k] || 0) + (hazards[k]?.type === 'Control' ? hazards[k].stallCycles : 0);
         }
-      }
-      let completionCycleForI = entryCycleToIF + (STAGES.length - 1);
-      if (stallsEnabled && stalls[i] && (hazards[i]?.type === 'RAW' || hazards[i]?.type === 'WAW')) {
-        completionCycleForI += stalls[i];
-      }
-      if (completionCycleForI > maxCompletionCycle) {
-        maxCompletionCycle = completionCycleForI;
-      }
+
+        for (let k = 0; k < instIndex; k++) { /* ... lógica de isFlushedThisCycle ... */
+            const prevBranchHazard = hazards[k]; const prevRegUsage = registerUsage[k];
+            if (prevBranchHazard?.type === 'Control' && prevRegUsage?.isConditionalBranch) {
+                let prevBranchEXResCycle = k + 1 + STAGES_ARRAY.indexOf('EX') +
+                    Array.from({length: k}).reduce((acc, _, prev_k_idx) => acc + (stalls[prev_k_idx] || 0) + (hazards[prev_k_idx]?.type === 'Control' ? hazards[prev_k_idx].stallCycles : 0), 0) +
+                    (stalls[k] || 0);
+                if (displayCycleNum > prevBranchEXResCycle && displayCycleNum <= prevBranchEXResCycle + prevBranchHazard.stallCycles) {
+                    isFlushedThisCycle = true; break;
+                }
+            }
+        }
+        
+        if (!isFlushedThisCycle) {
+            const dataStallsByThisInst = (stallsEnabled && stalls[instIndex] && (hazardInfo?.type === 'RAW' || hazardInfo?.type === 'WAW')) ? stalls[instIndex] : 0;
+            const idStageIdx = STAGES_ARRAY.indexOf('ID');
+            const cycleWhenEnteringID = entryCycleToIF + idStageIdx;
+
+            if (dataStallsByThisInst > 0 && displayCycleNum > cycleWhenEnteringID && displayCycleNum <= cycleWhenEnteringID + dataStallsByThisInst) {
+                isDataStallActiveForThisInstHere = true;
+                theoreticalStageName = 'ID';
+            } else {
+                let stageIdxInDisplayCycle = displayCycleNum - entryCycleToIF;
+                if (displayCycleNum > cycleWhenEnteringID + dataStallsByThisInst) {
+                    stageIdxInDisplayCycle -= dataStallsByThisInst;
+                }
+                if (stageIdxInDisplayCycle >= 0 && stageIdxInDisplayCycle < STAGES_ARRAY.length) {
+                    theoreticalStageName = STAGES_ARRAY[stageIdxInDisplayCycle];
+                }
+            }
+        }
     }
-    if (contextMaxCycles > 0 && contextMaxCycles >= maxCompletionCycle) {
-        return contextMaxCycles;
-    }
-    return Math.max(maxCompletionCycle, instructions.length > 0 ? STAGES.length : 0, cycle);
-  };
 
-  const totalCyclesToDisplay = calculateTotalPipelineCycles();
-  const cycleNumbers = Array.from(
-    { length: totalCyclesToDisplay },
-    (_, i) => i + 1
-  );
+    // Aplicar estado basado en la reconstrucción y el ciclo actual
+    if (isFlushedThisCycle) {
+        displayType = 'flushed';
+        cellIcon = XCircle;
+    } else if (theoreticalStageName) {
+        cellStageName = theoreticalStageName;
+        cellIcon = STAGE_ICONS[theoreticalStageName];
 
-  const branchMissCount = Object.values(hazards).filter(h => h.type === 'Control').length;
-
-  // Restaurar getForwardingInfoForCell
-  const getForwardingInfoForCell = (instIndex: number, stageName: StageInfo['name']) => {
-    if (!stallsEnabled || !forwardingEnabled || !forwardings[instIndex] || forwardings[instIndex].length === 0) {
-      return { isForwarding: false, details: [] };
-    }
-    const relevantForwardings = forwardings[instIndex].filter(f => f.toStage === stageName);
-    return { isForwarding: relevantForwardings.length > 0, details: relevantForwardings };
-  };
-
-  const getCellStateForCycle = (instIndex: number, targetCycleNum: number): CellState => {
-    const regUsageInfo = registerUsage[instIndex]; // CORRECCIÓN: Definir regUsageInfo aquí
-    const hazardInfo = hazards[instIndex];
-    const dataStallsByThisInst = (stallsEnabled && stalls[instIndex] && (hazardInfo?.type === 'RAW' || hazardInfo?.type === 'WAW')) ? stalls[instIndex] : 0;
-
-    let entryCycleToIF = instIndex + 1;
-    for (let k = 0; k < instIndex; k++) {
-      if (stallsEnabled && stalls[k] && (hazards[k]?.type === 'RAW' || hazards[k]?.type === 'WAW')) {
-        entryCycleToIF += stalls[k];
-      }
-      if (hazards[k]?.type === 'Control') {
-        entryCycleToIF += hazards[k].stallCycles;
-      }
+        if (displayCycleNum === currentCycle) { // CICLO ACTUAL Y ACTIVO
+            displayType = 'current'; // Etapa activa normal
+            if (regUsageInfo?.isConditionalBranch && theoreticalStageName === 'EX') {
+                displayType = hazardInfo?.type === 'Control' ? 'branch-miss' : 'branch-hit';
+                cellIcon = hazardInfo?.type === 'Control' ? ThumbsDown : ThumbsUp;
+            } else if (isDataStallActiveForThisInstHere && theoreticalStageName === 'ID') {
+                displayType = 'stall';
+                cellIcon = AlertTriangle;
+            } else if (forwardings[instIndex]?.some(f => f.toStage === theoreticalStageName) && theoreticalStageName === 'EX') {
+                displayType = 'forwarding';
+            }
+        } else if (displayCycleNum < currentCycle) { // CICLOS PASADOS
+            if (isDataStallActiveForThisInstHere && theoreticalStageName === 'ID') {
+                displayType = 'stall'; // Un stall que ocurrió en el pasado
+                cellIcon = AlertTriangle;
+            } else {
+                 // MODIFICACIÓN: Mostrar forwarding/hit/miss para ciclos pasados también
+                if (regUsageInfo?.isConditionalBranch && theoreticalStageName === 'EX') {
+                    displayType = hazardInfo?.type === 'Control' ? 'branch-miss' : 'completed'; // O 'branch-miss' si quieres el color crítico
+                    // Si fue miss, el color crítico podría tener más sentido que 'completed'
+                    // cellIcon = hazardInfo?.type === 'Control' ? ThumbsDown : STAGE_ICONS.EX;
+                    if (hazardInfo?.type === 'Control') cellIcon = ThumbsDown; else cellIcon = ThumbsUp; // Mostrar resultado
+                } else if (forwardings[instIndex]?.some(f => f.toStage === theoreticalStageName) && theoreticalStageName === 'EX') {
+                    displayType = 'forwarding'; // Forwarding que ocurrió en el pasado
+                } else {
+                    displayType = 'completed';
+                }
+            }
+        } else { // CICLOS FUTUROS (displayCycleNum > currentCycle)
+            displayType = 'empty'; // Dejar vacío para el futuro por ahora
+            cellStageName = null;
+            cellIcon = undefined;
+        }
+    } else { // Si no hay theoreticalStageName y no fue flusheada
+        displayType = 'empty';
     }
     
-    let stageIdxInTargetCycle = targetCycleNum - entryCycleToIF;
-
-    const idExitCycle = entryCycleToIF + 1;
-    if (dataStallsByThisInst > 0 && targetCycleNum > idExitCycle && targetCycleNum <= idExitCycle + dataStallsByThisInst) {
-      const stageBeforeStall = STAGES.find(s => s.name === "ID") || null; // CORRECCIÓN: Añadir || null
-      return { type: 'stall', stage: stageBeforeStall, isCurrentCell: targetCycleNum === cycle, hazardInfo };
-    }
-    if (targetCycleNum > idExitCycle + dataStallsByThisInst) {
-        stageIdxInTargetCycle -= dataStallsByThisInst;
-    }
-
-    for (let k = 0; k < instIndex; k++) {
-        const prevBranchHazard = hazards[k];
-        // CORRECCIÓN: usar regUsage[k] en lugar de regUsage solo (que sería undefined aquí)
-        const prevBranchRegUsage = registerUsage[k]; 
-        if (prevBranchHazard?.type === 'Control' && prevBranchRegUsage?.isConditionalBranch) {
-            let prevBranchEXEntryCycle = k + 1;
-            for(let prev_k=0; prev_k < k; prev_k++) {
-                if(stallsEnabled && stalls[prev_k] && (hazards[prev_k]?.type==='RAW' || hazards[prev_k]?.type==='WAW')) prevBranchEXEntryCycle += stalls[prev_k];
-                if(hazards[prev_k]?.type==='Control') prevBranchEXEntryCycle += hazards[prev_k].stallCycles;
-            }
-            prevBranchEXEntryCycle += 1;
-            const stallsByK = (stallsEnabled && stalls[k] && (hazards[k]?.type==='RAW' || hazards[k]?.type==='WAW')) ? stalls[k] : 0;
-            prevBranchEXEntryCycle += stallsByK;
-            prevBranchEXEntryCycle += 1;
-
-            const mispredictStallStartCycle = prevBranchEXEntryCycle; // Stall empieza en EX del branch
-            const mispredictStallEndCycle = mispredictStallStartCycle + prevBranchHazard.stallCycles -1;
-
-            if (targetCycleNum >= mispredictStallStartCycle && targetCycleNum <= mispredictStallEndCycle) {
-                return { type: 'flushed', stage: null, isCurrentCell: targetCycleNum === cycle, hazardInfo: prevBranchHazard };
-            }
+    // El `instructionStages` del contexto es la verdad absoluta para el `currentCycle`
+    // Sobrescribir si `displayCycleNum === currentCycle` y el contexto tiene una etapa diferente (raro con la simplificación)
+    if (displayCycleNum === currentCycle) {
+        const stageFromContext = instructionStages[instIndex] as StageNameUnion | null;
+        if (stageFromContext && stageFromContext !== cellStageName) { // Si el contexto tiene algo y es diferente
+            // Esto podría indicar un problema en la reconstrucción si el contexto es correcto.
+            // Por ahora, confiamos en la reconstrucción para la lógica de visualización,
+            // pero si el contexto es la fuente de verdad para el ciclo actual:
+            // cellStageName = stageFromContext;
+            // cellIcon = STAGE_ICONS[stageFromContext];
+            // displayType = 'current'; // Resetear displayType a 'current' y re-evaluar casos críticos
+            // ... (re-evaluar branch/stall/forwarding basado en stageFromContext) ...
+        } else if (!stageFromContext && cellStageName) {
+            // La reconstrucción dice que hay etapa, pero el contexto dice que no.
+            // Esto significa que la instrucción ya salió o fue flusheada ANTES de este ciclo.
+            displayType = 'empty';
+            cellStageName = null;
+            cellIcon = undefined;
         }
     }
 
-    if (stageIdxInTargetCycle < 0 || stageIdxInTargetCycle >= STAGES.length) {
-      return { type: 'empty', stage: null, isCurrentCell: false };
-    }
 
-    const stageData = STAGES[stageIdxInTargetCycle];
-    const isCurrentCell = targetCycleNum === cycle;
-
-    if (regUsageInfo?.isConditionalBranch && stageData.name === 'EX') {
-      if (hazardInfo?.type === 'Control') {
-        return { type: 'branch-miss', stage: stageData, isCurrentCell, hazardInfo };
-      } else {
-        return { type: 'branch-hit', stage: stageData, isCurrentCell };
-      }
-    }
-
-    // CORRECCIÓN: Usar la función restaurada
-    const { isForwarding, details: fwdDetails } = getForwardingInfoForCell(instIndex, stageData.name);
-    if (isForwarding && stageData.name === "EX") {
-      return { type: 'forwarding', stage: stageData, isCurrentCell, forwardingInfo: fwdDetails };
-    }
-
-    return { type: 'normal', stage: stageData, isCurrentCell };
+    return { displayType, stageName: cellStageName, icon: cellIcon, isPulsing: isPulsing && displayType !== 'empty' && displayType !== 'completed' && displayType !== 'flushed' };
   };
+
+  // ... (resto del componente JSX)
+  // En el renderizado de TableCell, usar cell.displayType para obtener la clase de CELL_STYLE_MAP
+  // y cell.icon, cell.stageName para el contenido.
+  // Ejemplo:
+  // const cellStyle = CELL_STYLE_MAP[cell.displayType];
+  // const IconToRender = cell.icon;
+  // ...
 
 
   return (
     <Card className='w-full overflow-hidden'>
-      {/* ... (CardHeader y CardDescription sin cambios) ... */}
       <CardHeader>
         <CardTitle>Pipeline Progress</CardTitle>
         <CardDescription className="flex items-center gap-2 pt-1">
-            {branchPredictionMode !== 'none' && (
-                <>
-                    <GitBranch className="w-4 h-4 text-muted-foreground" />
-                    <span className="text-xs text-muted-foreground">Branch Prediction: {branchPredictionMode}</span>
-                    {branchMissCount > 0 && (
-                        <Badge variant="destructive" className="ml-auto text-xs">
-                            {branchMissCount} Misses
-                        </Badge>
-                    )}
-                </>
-            )}
-            {!stallsEnabled && <span className='ml-2 text-xs font-normal text-muted-foreground'>(Ideal Pipeline)</span>}
+          {branchPredictionMode !== 'none' && (
+            <> <GitBranch className="w-4 h-4 text-muted-foreground" /> <span className="text-xs text-muted-foreground">Branch Prediction: {branchPredictionMode}</span>
+              {branchMissCount > 0 && (<Badge variant="destructive" className="ml-auto text-xs"> {branchMissCount} Misses </Badge>)} </>
+          )}
+          {!stallsEnabled && <span className='ml-2 text-xs font-normal text-muted-foreground'>(Ideal Pipeline)</span>}
         </CardDescription>
       </CardHeader>
       <CardContent>
         <div className='overflow-x-auto pb-4'>
-          <Table className='min-w-[calc(var(--min-col-width)*10)]'>
-            {/* ... (TableCaption y TableHeader sin cambios) ... */}
+          <Table className='min-w-max'>
             <TableCaption className="mt-4">
-              MIPS pipeline visualization. Cycle: {cycle}
-              {isFinished && " (Finished)"}. Total cycles shown: {totalCyclesToDisplay}.
+              MIPS pipeline visualization. Cycle: {currentCycle}
+              {isFinished && " (Finished)"}. Total cycles displayed: {totalCyclesToDisplay}.
             </TableCaption>
             <TableHeader>
               <TableRow>
                 <TableHead className='w-[150px] min-w-[150px] sticky left-0 bg-card z-20 border-r'>Inst (Hex)</TableHead>
                 <TableHead className='w-[80px] min-w-[80px] sticky left-[150px] bg-card z-20 border-r'>Type</TableHead>
-                <TableHead className='w-[250px] min-w-[250px] sticky left-[230px] bg-card z-20 border-r'>
-                  Info
-                </TableHead>
-                {cycleNumbers.map((c) => (
-                  <TableHead key={`cycle-${c}`} className='text-center min-w-[4.5rem] w-18'>
-                    {c}
-                  </TableHead>
-                ))}
+                <TableHead className='w-[250px] min-w-[250px] sticky left-[230px] bg-card z-20 border-r'>Info</TableHead>
+                {cycleNumbers.map((c) => (<TableHead key={`cycle-${c}`} className='text-center min-w-[4.5rem] w-18'>{c}</TableHead>))}
               </TableRow>
             </TableHeader>
             <TableBody>
               {instructions.map((inst, instIndex) => {
-                // ... (Definición de regUsageInfo, hazardInfo, dataStallCount sin cambios) ...
                 const regUsageInfo = registerUsage[instIndex];
                 const hazardInfo = hazards[instIndex];
                 const dataStallCount = (stallsEnabled && stalls[instIndex] && (hazardInfo?.type === 'RAW' || hazardInfo?.type === 'WAW')) ? stalls[instIndex] : 0;
-
                 return (
                   <TableRow key={`inst-${instIndex}`} className='h-20'>
-                    {/* ... (TableCell para Inst (Hex) y Type sin cambios) ... */}
-                    <TableCell className='font-mono text-xs sticky left-0 bg-card z-10 border-r'>
-                      {`I${instIndex}: ${inst}`}
-                    </TableCell>
+                    <TableCell className='font-mono text-xs sticky left-0 bg-card z-10 border-r'>{`I${instIndex}: ${inst}`}</TableCell>
                     <TableCell className='sticky left-[150px] bg-card z-10 border-r text-xs'>
-                       {regUsageInfo && (
-                        <>
+                      {regUsageInfo && (
+                        <div className="flex flex-col gap-0.5">
                           <Badge variant="outline" className="text-[10px] px-1.5 py-0.5">{regUsageInfo.type}</Badge>
-                          {regUsageInfo.isLoad && <Badge variant="outline" className="mt-1 bg-purple-100 border-purple-300 text-purple-700 text-[10px] px-1.5 py-0.5">LOAD</Badge>}
-                          {regUsageInfo.isStore && <Badge variant="outline" className="mt-1 bg-orange-100 border-orange-300 text-orange-700 text-[10px] px-1.5 py-0.5">STORE</Badge>}
-                          {regUsageInfo.isBranch && <Badge variant="outline" className="mt-1 bg-sky-100 border-sky-300 text-sky-700 text-[10px] px-1.5 py-0.5">BRANCH</Badge>}
-                          {regUsageInfo.isJump && <Badge variant="outline" className="mt-1 bg-lime-100 border-lime-300 text-lime-700 text-[10px] px-1.5 py-0.5">JUMP</Badge>}
-                        </>
+                          {regUsageInfo.isLoad && <Badge variant="outline" className="bg-purple-100 border-purple-300 text-purple-700 text-[10px] px-1.5 py-0.5">LOAD</Badge>}
+                          {regUsageInfo.isStore && <Badge variant="outline" className="bg-orange-100 border-orange-300 text-orange-700 text-[10px] px-1.5 py-0.5">STORE</Badge>}
+                          {regUsageInfo.isBranch && <Badge variant="outline" className="bg-sky-100 border-sky-300 text-sky-700 text-[10px] px-1.5 py-0.5">BRANCH</Badge>}
+                          {regUsageInfo.isJump && <Badge variant="outline" className="bg-lime-100 border-lime-300 text-lime-700 text-[10px] px-1.5 py-0.5">JUMP</Badge>}
+                        </div>
                       )}
                     </TableCell>
                     <TableCell className='sticky left-[230px] bg-card z-10 border-r text-xs'>
                       {stallsEnabled && hazardInfo && hazardInfo.type !== 'NONE' && (
                         <div className='flex flex-col gap-1 items-start max-w-[230px] overflow-hidden'>
                           <div className='flex items-center gap-1 flex-wrap'>
-                            <Badge className={cn('px-1.5 py-0.5 text-[10px]', hazardInfo.type==='RAW'&&'border-red-500 bg-red-100 text-red-700', hazardInfo.type==='WAW'&&'border-yellow-500 bg-yellow-100 text-yellow-700', hazardInfo.type==='Control'&&'border-amber-500 bg-amber-100 text-amber-700')}>{hazardInfo.type}</Badge>
-                            {hazardInfo.type!=='Control' && forwardings[instIndex]?.length>0 && (<Badge className='px-1.5 py-0.5 text-[10px] bg-green-100 text-green-700 border-green-500'>FORWARD</Badge>)}
-                            {dataStallCount>0 && (hazardInfo.type==='RAW'||hazardInfo.type==='WAW') && (<Badge className='px-1.5 py-0.5 text-[10px] bg-red-100 text-red-700 border-red-500'>DATA STALL ({dataStallCount})</Badge>)}
-                            {hazardInfo.type==='Control' && hazardInfo.stallCycles>0 && (<Badge className='px-1.5 py-0.5 text-[10px] bg-yellow-100 text-yellow-700 border-yellow-500'>MISPREDICT ({hazardInfo.stallCycles} stall)</Badge>)}
+                            <Badge className={cn('px-1.5 py-0.5 text-[10px]', hazardInfo.type === 'RAW' && 'border-red-500 bg-red-100 text-red-700', hazardInfo.type === 'WAW' && 'border-yellow-500 bg-yellow-100 text-yellow-700', hazardInfo.type === 'Control' && 'border-amber-500 bg-amber-100 text-amber-700')}>{hazardInfo.type}</Badge>
+                            {hazardInfo.type !== 'Control' && forwardings[instIndex]?.length > 0 && (<Badge className='px-1.5 py-0.5 text-[10px] bg-green-100 text-green-700 border-green-500'>FORWARD</Badge>)}
+                            {dataStallCount > 0 && (hazardInfo.type === 'RAW' || hazardInfo.type === 'WAW') && (<Badge className='px-1.5 py-0.5 text-[10px] bg-red-100 text-red-700 border-red-500'>DATA STALL ({dataStallCount})</Badge>)}
+                            {hazardInfo.type === 'Control' && hazardInfo.stallCycles > 0 && (<Badge className='px-1.5 py-0.5 text-[10px] bg-yellow-100 text-yellow-700 border-yellow-500'>MISPREDICT ({hazardInfo.stallCycles} stall)</Badge>)}
                           </div>
                           <p className="text-muted-foreground text-[10px] leading-tight whitespace-normal break-words">{hazardInfo.description}</p>
-                          {hazardInfo.type!=='Control' && forwardings[instIndex]?.map((fw,idx)=>(<span key={idx} className='text-[10px] border px-1 py-0 bg-gray-100 rounded-sm whitespace-nowrap'>{fw.fromStage}(I{fw.from}){fw.register}→{fw.toStage}</span>))}
+                          {hazardInfo.type !== 'Control' && forwardings[instIndex]?.map((fw, idx) => (<span key={idx} className='text-[10px] border px-1 py-0 bg-gray-100 rounded-sm whitespace-nowrap'>{fw.fromStage}(I{fw.from}){fw.register}→{fw.toStage}</span>))}
                         </div>
                       )}
-                       {!stallsEnabled && <p className="text-muted-foreground text-[10px]">Ideal Pipeline</p>}
+                      {!stallsEnabled && <p className="text-muted-foreground text-[10px]">Ideal Pipeline</p>}
                     </TableCell>
 
                     {cycleNumbers.map((c) => {
-                      const cell = getCellStateForCycle(instIndex, c);
-                      let cellContentNode: JSX.Element | string = ''; // Renombrado para evitar conflicto
-                      let cellStyleClass = cell.stage ? cell.stage.color : CELL_COLORS.empty;
+                      const cell = getCellStateForDisplay(instIndex, c);
+                      let cellContentNode: JSX.Element | string = '';
                       let animationClass = '';
 
-                      if (cell.isCurrentCell && isRunning && !isFinished) {
-                        animationClass = 'animate-pulse-bg';
-                      }
-                      
-                      if (cell.type === 'stall') cellStyleClass = CELL_COLORS.stall;
-                      else if (cell.type === 'mispredictStall') cellStyleClass = CELL_COLORS.mispredictStall;
-                      else if (cell.type === 'flushed') cellStyleClass = CELL_COLORS.flushed; // Aplicar color de flush
-                      else if (cell.type === 'forwarding') cellStyleClass = CELL_COLORS.forwarding;
-                      else if (cell.type === 'branch-hit') cellStyleClass = CELL_COLORS.branchHit;
-                      else if (cell.type === 'branch-miss') cellStyleClass = CELL_COLORS.branchMiss;
-                      else if (cell.type === 'empty') cellStyleClass = CELL_COLORS.empty;
+                      if (cell.isPulsing) animationClass = 'animate-pulse-bg';
 
-                      if (cell.stage) {
-                        // CORRECCIÓN: Usar un nombre de variable diferente para el componente de icono
-                        const IconComponent = cell.type === 'branch-hit' ? ThumbsUp :
-                                             cell.type === 'branch-miss' ? ThumbsDown :
-                                             cell.stage.icon;
-                        
+                      const cellStyle = CELL_STYLE_MAP[cell.displayType]; // Usar displayType para el estilo
+                      const IconToRender = cell.icon;
+
+                      if (IconToRender && cell.stageName) {
                         cellContentNode = (
                           <div className='flex flex-col items-center justify-center h-full'>
-                            <IconComponent className={cn('w-4 h-4 mb-0.5', cell.type==='branch-hit' || cell.type==='branch-miss' ? 'w-5 h-5': '')} />
-                            <span className='text-[10px] leading-none'>{cell.stage.name}</span>
-                            {cell.type === 'forwarding' && <Zap className='w-3 h-3 text-green-500 absolute top-1 right-1' />}
+                            <IconToRender className={cn('w-4 h-4 mb-0.5', (cell.displayType === 'branch-hit' || cell.displayType === 'branch-miss') && 'w-5 h-5')} />
+                            <span className='text-[10px] leading-none'>{cell.stageName}</span>
+                            {cell.displayType === 'forwarding' && <Zap className='w-3 h-3 text-white absolute top-1 right-1' />}
                           </div>
                         );
-                      } else if (cell.type === 'stall' || cell.type === 'mispredictStall') {
+                      } else if (cell.displayType === 'stall' && IconToRender) {
                         cellContentNode = (
                           <div className='flex flex-col items-center justify-center h-full'>
-                            <AlertTriangle className='w-4 h-4 mb-0.5' />
-                            <span className='text-[10px] leading-none'>STALL</span>
+                            <IconToRender className='w-4 h-4 mb-0.5' />
+                            <span className='text-[10px] leading-none text-inherit'>STALL</span>
                           </div>
                         );
-                      } else if (cell.type === 'flushed') {
+                      } else if (cell.displayType === 'flushed' && IconToRender) {
                         cellContentNode = (
-                           <div className='flex flex-col items-center justify-center h-full'>
-                            <XCircle className='w-4 h-4 mb-0.5 opacity-60' />
-                            <span className='text-[10px] leading-none opacity-60'>FLUSH</span>
+                          <div className='flex flex-col items-center justify-center h-full'>
+                            <IconToRender className='w-4 h-4 mb-0.5 opacity-70' />
+                            <span className='text-[10px] leading-none opacity-70'>FLUSH</span>
                           </div>
                         );
                       }
@@ -318,10 +320,10 @@ export function PipelineVisualization() {
                         <TableCell
                           key={`inst-${instIndex}-cycle-${c}`}
                           className={cn(
-                            'text-center w-18 min-w-[4.5rem] h-14 transition-colors duration-200 relative',
-                            cellStyleClass,
+                            'text-center w-18 min-w-[4.5rem] h-14 transition-colors duration-100 relative',
+                            cellStyle, // Aplicar el estilo calculado
                             animationClass,
-                            cell.isCurrentCell && cell.type !=='empty' ? 'ring-2 ring-offset-1 ring-primary dark:ring-offset-background' : ''
+                            (cell.isPulsing) ? 'ring-2 ring-offset-1 ring-primary dark:ring-offset-background' : ''
                           )}
                         >
                           {cellContentNode}
@@ -334,21 +336,22 @@ export function PipelineVisualization() {
             </TableBody>
           </Table>
         </div>
-        {/* ... (Leyenda como antes) ... */}
+        {/* Leyenda Actualizada */}
         <div className='flex flex-wrap gap-x-4 gap-y-2 mt-4 text-xs items-center'>
           <span className='font-semibold'>Legend:</span>
-          {STAGES.map(s => ( <div key={s.name} className='flex items-center'><div className={cn('w-3 h-3 mr-1 rounded-sm', s.color.split(' ')[0])}></div>{s.name}</div> ))}
+          <div className='flex items-center'><div className={cn('w-3 h-3 mr-1 rounded-sm', CELL_STYLE_MAP.current.split(' ')[0])}></div>Current</div>
+          <div className='flex items-center'><div className={cn('w-3 h-3 mr-1 rounded-sm', CELL_STYLE_MAP.completed.split(' ')[0])}></div>Completed</div>
           {stallsEnabled && (
             <>
-              <div className='flex items-center'><div className={cn('w-3 h-3 mr-1 rounded-sm', CELL_COLORS.stall.split(' ')[0])}></div>Data Stall</div>
-              <div className='flex items-center'><div className={cn('w-3 h-3 mr-1 rounded-sm', CELL_COLORS.forwarding.split(' ')[0])}></div>Forwarding</div>
+              <div className='flex items-center'><div className={cn('w-3 h-3 mr-1 rounded-sm', CELL_STYLE_MAP.stall.split(' ')[0])}></div>Data Stall</div>
+              <div className='flex items-center'><div className={cn('w-3 h-3 mr-1 rounded-sm', CELL_STYLE_MAP.forwarding.split(' ')[0])}></div>Forwarding</div>
             </>
           )}
-           {branchPredictionMode !== 'none' && (
+          {branchPredictionMode !== 'none' && (
             <>
-              <div className='flex items-center'><div className={cn('w-3 h-3 mr-1 rounded-sm', CELL_COLORS.branchHit.split(' ')[0])}></div>Branch Hit</div>
-              <div className='flex items-center'><div className={cn('w-3 h-3 mr-1 rounded-sm', CELL_COLORS.branchMiss.split(' ')[0])}></div>Branch Miss</div>
-              <div className='flex items-center'><div className={cn('w-3 h-3 mr-1 rounded-sm', CELL_COLORS.flushed.split(' ')[0])}></div>Flush/Mispredict</div>
+              <div className='flex items-center'><div className={cn('w-3 h-3 mr-1 rounded-sm', CELL_STYLE_MAP["branch-hit"].split(' ')[0])}></div>Branch Hit</div>
+              <div className='flex items-center'><div className={cn('w-3 h-3 mr-1 rounded-sm', CELL_STYLE_MAP["branch-miss"].split(' ')[0])}></div>Branch Miss</div>
+              <div className='flex items-center'><div className={cn('w-3 h-3 mr-1 rounded-sm', CELL_STYLE_MAP.flushed.split(' ')[0])}></div>Flush</div>
             </>
           )}
         </div>
