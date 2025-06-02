@@ -75,11 +75,10 @@ interface SimulationState {
 
   aluResults: Record<number, number>;
   loadedFromMem: Record<number, number>;
-
   branchMode: "ALWAYS_TAKEN" | "ALWAYS_NOT_TAKEN" | "STATE_MACHINE"; // Add branch prediction mode
   initialPrediction: boolean; // Initial prediction state for branch instructions
   failThreshold: number; // Threshold for branch prediction failure
-  branchPredictionState: Record<number, BranchPredictionEntry>; // Add branch prediction state
+  branchPredictionState: Record<string, BranchPredictionEntry>; // Add branch prediction state
   branchOutcome: Record<number, boolean>; // true = hit, false = miss
   branchMissCount: number;
 }
@@ -394,9 +393,7 @@ function handleBranchAtID(
     } else {
       // BNE: taken if rsVal !== rtVal
       isTakenReal = rsVal !== rtVal;
-    }
-
-    // 3) Compare prediction vs reality
+    } // 3) Compare prediction vs reality
     const wasCorrect = predictedTaken === isTakenReal;
     newBranchOutcome[idx] = wasCorrect;
 
@@ -440,7 +437,6 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
   if (!currentState.isRunning || currentState.isFinished) {
     return currentState;
   }
-
   const nextCycle = currentState.currentCycle + 1;
 
   const newInstructionStages: Record<number, number | null> = {
@@ -450,23 +446,20 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
   const newMemory = { ...currentState.memory };
   const newAluResults = { ...currentState.aluResults };
   const newLoadedFromMem = { ...currentState.loadedFromMem };
-
-  const newBranchPredictionState: Record<number, BranchPredictionEntry> = {
+  const newBranchPredictionState: Record<string, BranchPredictionEntry> = {
     ...currentState.branchPredictionState,
   };
   const newBranchOutcome: Record<number, boolean> = {
     ...currentState.branchOutcome,
   };
   const branchMissCountRef = { value: currentState.branchMissCount };
-
   let newStallCycles = currentState.currentStallCycles;
-
   if (newStallCycles > 0) {
     newStallCycles--;
     return {
       ...currentState,
       currentCycle: nextCycle,
-      instructionStages: currentState.instructionStages,
+      instructionStages: currentState.instructionStages, // Keep same stages during stall
       currentStallCycles: newStallCycles,
     };
   }
@@ -475,17 +468,37 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
   Object.values(currentState.stalls).forEach((s) => {
     totalStallCycles += s;
   });
-
   currentState.instructions.forEach((_, idx) => {
     const prevStage = currentState.instructionStages[idx] ?? -1;
-    const precedingStalls = calculatePrecedingStalls(currentState.stalls, idx);
-    const stageIndex = nextCycle - idx - 1 - precedingStalls;
 
-    const isActive = stageIndex >= 0 && stageIndex < currentState.stageCount;
-    const newStage = isActive ? stageIndex : null;
-    newInstructionStages[idx] = newStage;
+    let newStage: number | null;
 
-    // Constants for stage indices
+    if (prevStage === -1) {
+      // Instruction hasn't entered pipeline yet
+      const idealStageIndex = nextCycle - idx - 1;
+      if (idealStageIndex >= 0 && idealStageIndex < currentState.stageCount) {
+        newStage = idealStageIndex;
+      } else {
+        newStage = null;
+      }
+    } else {
+      // Instruction is already in pipeline - advance sequentially
+      // Check if this instruction should be stalled in ID stage
+      if (prevStage === 1 && currentState.stalls[idx] > 0) {
+        // Stay in ID stage due to stall
+        newStage = 1;
+      } else {
+        // Advance to next stage
+        const nextStage = prevStage + 1;
+        if (nextStage < currentState.stageCount) {
+          newStage = nextStage;
+        } else {
+          // Instruction completes
+          newStage = null;
+        }
+      }
+    }
+    newInstructionStages[idx] = newStage; // Constants for stage indices
     const ID_STAGE = 1;
     const EX_STAGE = 2;
     const MEM_STAGE = 3;
@@ -575,9 +588,7 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
           newAluResults[idx] = rsVal + imm;
         }
       }
-    }
-
-    // ID_STAGE is before EX_STAGE
+    } // ID_STAGE is before EX_STAGE
     if (newStage === ID_STAGE && (prevStage === null || prevStage < ID_STAGE)) {
       handleBranchAtID(
         idx,
@@ -587,16 +598,19 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
           branchMode: currentState.branchMode,
           initialPrediction: currentState.initialPrediction,
           failThreshold: currentState.failThreshold,
-          branchPredictionState: currentState.branchPredictionState,
-          branchOutcome: currentState.branchOutcome,
+          branchPredictionState: newBranchPredictionState, // Use updated state
+          branchOutcome: newBranchOutcome, // Use updated state
         },
         newBranchPredictionState,
         newBranchOutcome,
         branchMissCountRef
       );
     }
-
-    if (isActive && currentState.stalls[idx] > 0 && newStallCycles === 0) {
+    if (
+      newStage !== null &&
+      currentState.stalls[idx] > 0 &&
+      newStallCycles === 0
+    ) {
       newStallCycles = currentState.stalls[idx];
     }
   });
@@ -671,15 +685,12 @@ export function SimulationProvider({ children }: PropsWithChildren) {
       if (submittedInstructions.length === 0) {
         resetSimulation(); // Reset if no instructions submitted
         return;
-      }
-
-      // Parse instructions to extract register usage
+      } // Parse instructions to extract register usage
       const registerUsage: Record<number, RegisterUsage> = {};
       submittedInstructions.forEach((inst, index) => {
-        registerUsage[index] = parseInstruction(inst);
-      });
-
-      // Detect hazards and determine forwarding/stalls
+        const parsed = parseInstruction(inst);
+        registerUsage[index] = parsed;
+      }); // Detect hazards and determine forwarding/stalls
       const [hazards, forwardings, stalls] = detectHazards(
         submittedInstructions,
         registerUsage,
