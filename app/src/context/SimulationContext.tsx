@@ -532,6 +532,15 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
         const rtVal = newRegisterFile[usage.rt];
         let result = 0;
         switch (usage.funct) {
+          case 0: // SLL
+            result = rtVal << (rsVal & 0x1f);
+            break;
+          case 2: // SRL
+            result = rtVal >>> (rsVal & 0x1f);
+            break;
+          case 3: // SRA
+            result = rtVal >> (rsVal & 0x1f);
+            break;
           case 32: // ADD
             result = rsVal + rtVal;
             break;
@@ -543,6 +552,12 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
             break;
           case 37: // OR
             result = rsVal | rtVal;
+            break;
+          case 38: // XOR
+            result = rsVal ^ rtVal;
+            break;
+          case 39: // NOR
+            result = ~(rsVal | rtVal);
             break;
           case 42: // SLT
             result = rsVal < rtVal ? 1 : 0;
