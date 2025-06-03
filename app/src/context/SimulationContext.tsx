@@ -1,23 +1,24 @@
-// src/context/SimulationContext.tsx
-"use client"; // Add 'use client' directive
+"use client";
 
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type PropsWithChildren,
-} from "react";
-import * as React from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type PropsWithChildren } from "react";
 
-// Define the stage names (optional, but good for clarity)
+type PredictionMode = "always" | "machine";
+
+interface BranchConfig {
+  mode: PredictionMode;
+  initialPrediction: boolean;
+  missThreshold: number;
+}
+
+interface PredictorState {
+  currentPrediction: boolean;
+  missesRemaining: number;
+}
+
 const STAGE_NAMES = ["IF", "ID", "EX", "MEM", "WB"] as const;
-type StageName = (typeof STAGE_NAMES)[number];
+type StageName = typeof STAGE_NAMES[number];
 
-type InstructionType = "R" | "I" | "J";
+type InstructionType = "R" | "I" | "J" | "OTHER";
 type HazardType = "RAW" | "WAW" | "NONE";
 
 interface RegisterUsage {
@@ -27,7 +28,10 @@ interface RegisterUsage {
   opcode: number;
   funct: number;
   type: InstructionType;
-  isLoad: boolean; // Add this to detect load instructions
+  isLoad: boolean;
+  isBranch: boolean;
+  branchType?: "BEQ" | "BNE";
+  immediate?: number;
 }
 
 interface HazardInfo {
@@ -60,32 +64,34 @@ interface SimulationState {
   stalls: Record<number, number>;
 
   currentStallCycles: number;
-
   forwardingEnabled: boolean;
-  stallsEnabled: boolean; // Add this new option
+  stallsEnabled: boolean;
+
+  branchConfig: BranchConfig;
+  predictorState: PredictorState;
+  missCount: number;
+  branchMisses: Record<number, boolean>
+  branchStateIndex: Record<number, number>;
+  registerFileStates: Record<number, number>[];
+
+  branchTakenTargets: Record<number, boolean>;
 }
 
-// Define the shape of the context actions
 interface SimulationActions {
-  startSimulation: (submittedInstructions: string[]) => void;
+  startSimulation: (submittedInstructions: string[], branchConfig: BranchConfig) => void;
   resetSimulation: () => void;
   pauseSimulation: () => void;
   resumeSimulation: () => void;
   setForwardingEnabled: (enabled: boolean) => void;
-  setStallsEnabled: (enabled: boolean) => void; // Add this new action
+  setStallsEnabled: (enabled: boolean) => void;
 }
 
-// Create the contexts
-const SimulationStateContext = createContext<SimulationState | undefined>(
-  undefined
-);
-const SimulationActionsContext = createContext<SimulationActions | undefined>(
-  undefined
-);
+const SimulationStateContext = createContext<SimulationState | undefined>(undefined);
+const SimulationActionsContext = createContext<SimulationActions | undefined>(undefined);
 
-const DEFAULT_STAGE_COUNT = STAGE_NAMES.length; // Use length of defined stages
+const DEFAULT_STAGE_COUNT = STAGE_NAMES.length;
 
-const initialState: SimulationState = {
+const initialBinaryState: SimulationState = {
   instructions: [],
   currentCycle: 0,
   maxCycles: 0,
@@ -93,13 +99,30 @@ const initialState: SimulationState = {
   stageCount: DEFAULT_STAGE_COUNT,
   instructionStages: {},
   isFinished: false,
+
   registerUsage: {},
   hazards: {},
   forwardings: {},
   stalls: {},
+
   currentStallCycles: 0,
   forwardingEnabled: true,
-  stallsEnabled: true, // Add this new option
+  stallsEnabled: true,
+
+  branchConfig: {
+    mode: "always",
+    initialPrediction: false,
+    missThreshold: 1,
+  },
+  predictorState: {
+    currentPrediction: false,
+    missesRemaining: 1,
+  },
+  missCount: 0,
+  branchMisses: {},
+  branchStateIndex: {},
+  registerFileStates: [],
+  branchTakenTargets: {},
 };
 
 const parseInstruction = (hexInstruction: string): RegisterUsage => {
@@ -108,10 +131,13 @@ const parseInstruction = (hexInstruction: string): RegisterUsage => {
   const rs = parseInt(binary.substring(6, 11), 2);
   const rt = parseInt(binary.substring(11, 16), 2);
 
-  let type: InstructionType = "R";
+  let type: InstructionType = "OTHER";
   let rd = 0;
   let funct = 0;
   let isLoad = false;
+  let isBranch = false;
+  let branchType: "BEQ" | "BNE" | undefined = undefined;
+  let immediate: number | undefined = undefined;
 
   if (opcode === 0) {
     type = "R";
@@ -120,21 +146,38 @@ const parseInstruction = (hexInstruction: string): RegisterUsage => {
   } else if (opcode === 2 || opcode === 3) {
     type = "J";
     rd = opcode === 3 ? 31 : 0;
-    funct = 0;
+  } else if (opcode === 4 || opcode === 5) {
+    type = "I";
+    isBranch = true;
+    branchType = opcode === 4 ? "BEQ" : "BNE";
+    const immRaw = binary.substring(16, 32);
+    const signedImm =
+      immRaw[0] === "1" ? parseInt(immRaw, 2) - 0x10000 : parseInt(immRaw, 2);
+    immediate = signedImm;
+  } else if (opcode >= 32 && opcode <= 37) {
+    type = "I";
+    isLoad = true;
+    rd = rt;
+    const immRaw = binary.substring(16, 32);
+    const signedImm =
+      immRaw[0] === "1" ? parseInt(immRaw, 2) - 0x10000 : parseInt(immRaw, 2);
+    immediate = signedImm;
+  } else if (opcode >= 8 && opcode <= 15) {
+    type = "I";
+    rd = rt;
+    const immRaw = binary.substring(16, 32);
+    const signedImm =
+      immRaw[0] === "1" ? parseInt(immRaw, 2) - 0x10000 : parseInt(immRaw, 2);
+    immediate = signedImm;
   } else {
     type = "I";
-    // Check for load instructions (lw = 35, lh = 33, lb = 32, etc.)
-    if (opcode >= 32 && opcode <= 37) {
-      rd = rt; // For loads, rt is the destination
-      isLoad = true;
-    } else if (opcode >= 8 && opcode <= 15) {
-      rd = rt; // For immediate arithmetic, rt is the destination
-    } else {
-      rd = 0;
-    }
+    const immRaw = binary.substring(16, 32);
+    const signedImm =
+      immRaw[0] === "1" ? parseInt(immRaw, 2) - 0x10000 : parseInt(immRaw, 2);
+    immediate = signedImm;
   }
 
-  return { rs, rt, rd, opcode, funct, type, isLoad };
+  return { rs, rt, rd, opcode, funct, type, isLoad, isBranch, branchType, immediate };
 };
 
 const detectHazards = (
@@ -151,7 +194,6 @@ const detectHazards = (
   const forwardings: Record<number, ForwardingInfo[]> = {};
   const stalls: Record<number, number> = {};
 
-  // Initialize all instructions with no hazard
   instructions.forEach((_, index) => {
     hazards[index] = {
       type: "NONE",
@@ -163,25 +205,18 @@ const detectHazards = (
     stalls[index] = 0;
   });
 
-  // If stalls are disabled, skip hazard detection entirely
   if (!stallsEnabled) {
     return [hazards, forwardings, stalls];
   }
 
   for (let i = 1; i < instructions.length; i++) {
     const currentInst = registerUsage[i];
+    if (currentInst.isBranch || currentInst.type === "J") continue;
 
-    // Skip if current instruction is a jump
-    if (currentInst.type === "J") continue;
-
-    // Only check the immediately previous instruction (distance = 1)
     const j = i - 1;
     const prevInst = registerUsage[j];
-
-    // Skip if previous instruction doesn't write to any register
     if (prevInst.rd === 0) continue;
 
-    // Check for RAW hazards
     let hasRawHazard = false;
     let hazardRegister = "";
 
@@ -192,41 +227,35 @@ const detectHazards = (
       (currentInst.rt === prevInst.rd && currentInst.type !== "I") ||
       (currentInst.type === "I" && !currentInst.isLoad)
     ) {
-      // For I-type instructions, rt might be a source (like in store instructions)
-      // or destination (like in load instructions)
       hasRawHazard = true;
       hazardRegister = `rt($${currentInst.rt})`;
     }
 
     if (hasRawHazard) {
       if (prevInst.isLoad) {
-        // Load-use hazard: Always needs 1 stall, then can forward from MEM
         hazards[i] = {
           type: "RAW",
-          description: `Load-use hazard: ${hazardRegister} depends on lw in instruction ${j}`,
+          description: `Load-use hazard: ${hazardRegister} depende de lw en instrucción ${j}`,
           canForward: forwardingEnabled,
           stallCycles: 1,
         };
         stalls[i] = 1;
-
         if (forwardingEnabled) {
           forwardings[i] = [
             {
               from: j,
               to: i,
-              fromStage: "MEM", // Forward from MEM/WB to EX
+              fromStage: "MEM",
               toStage: "EX",
               register: `$${prevInst.rd}`,
             },
           ];
         }
       } else {
-        // Regular RAW hazard
         if (forwardingEnabled) {
-          // Can forward from EX/MEM to EX, no stall needed
           hazards[i] = {
             type: "RAW",
-            description: `RAW hazard: ${hazardRegister} depends on instruction ${j} (forwarded)`,
+            description: `RAW hazard: ${hazardRegister} depende de instrucción ${j} (forwarded)`,
             canForward: true,
             stallCycles: 0,
           };
@@ -234,16 +263,15 @@ const detectHazards = (
             {
               from: j,
               to: i,
-              fromStage: "EX", // Forward from EX/MEM to EX
+              fromStage: "EX",
               toStage: "EX",
               register: `$${prevInst.rd}`,
             },
           ];
         } else {
-          // No forwarding: need 2 stalls for complete bubble
           hazards[i] = {
             type: "RAW",
-            description: `RAW hazard: ${hazardRegister} depends on instruction ${j} (no forwarding)`,
+            description: `RAW hazard: ${hazardRegister} depende de instrucción ${j} (no forwarding)`,
             canForward: false,
             stallCycles: 2,
           };
@@ -252,7 +280,7 @@ const detectHazards = (
       }
     }
 
-    // Check for WAW hazards (only for instructions that write to the same register)
+    // WAW
     if (
       currentInst.rd !== 0 &&
       currentInst.rd === prevInst.rd &&
@@ -260,7 +288,7 @@ const detectHazards = (
     ) {
       hazards[i] = {
         type: "WAW",
-        description: `WAW hazard: Both instructions write to $${currentInst.rd}`,
+        description: `WAW hazard: Ambas escriben en $${currentInst.rd}`,
         canForward: true,
         stallCycles: 0,
       };
@@ -274,11 +302,91 @@ const calculatePrecedingStalls = (
   stalls: Record<number, number>,
   index: number
 ): number => {
-  let totalStalls = 0;
+  let total = 0;
   for (let i = 0; i < index; i++) {
-    totalStalls += stalls[i] || 0;
+    total += stalls[i] || 0;
   }
-  return totalStalls;
+  return total;
+};
+
+const simulateRegisterFiles = (
+  submittedInstructions: string[],
+  registerUsage: Record<number, RegisterUsage>
+): Record<number, number>[] => {
+  const states: Record<number, number>[] = [];
+  const regFile: Record<number, number> = {};
+  for (let r = 0; r < 32; r++) regFile[r] = 0;
+
+  submittedInstructions.forEach((_, idx) => {
+    const usage = registerUsage[idx];
+    states.push({ ...regFile });
+
+    if (usage.type === "R") {
+      const funct = usage.funct;
+      const rsVal = regFile[usage.rs];
+      const rtVal = regFile[usage.rt];
+      let result = 0;
+      switch (funct) {
+        case 32: // add
+          result = rsVal + rtVal;
+          break;
+        case 34: // sub
+          result = rsVal - rtVal;
+          break;
+        case 36: // and
+          result = rsVal & rtVal;
+          break;
+        case 37: // or
+          result = rsVal | rtVal;
+          break;
+        case 42: // slt
+          result = rsVal < rtVal ? 1 : 0;
+          break;
+        default:
+          result = 0;
+      }
+      if (usage.rd !== 0) {
+        regFile[usage.rd] = result;
+      }
+    } else if (usage.type === "I" && usage.isBranch) {
+      // BEQ/BNE
+    } else if (usage.type === "I" && usage.isLoad) {
+      // lw: asigns 0 to rd
+      if (usage.rd !== 0) {
+        regFile[usage.rd] = 0;
+      }
+    } else if (usage.type === "I" && !usage.isBranch) {
+      // ADDI, ANDI, ORI, SLTI, etc.
+      const opc = usage.opcode;
+      const rsVal = regFile[usage.rs];
+      const imm = usage.immediate ?? 0;
+      let result = 0;
+      switch (opc) {
+        case 8: // addi
+          result = rsVal + imm;
+          break;
+        case 12: // andi
+          result = rsVal & imm;
+          break;
+        case 13: // ori
+          result = rsVal | imm;
+          break;
+        case 14: // xori
+          result = rsVal ^ imm;
+          break;
+        case 10: // slti
+          result = rsVal < imm ? 1 : 0;
+          break;
+        default:
+          result = 0;
+      }
+      if (usage.rd !== 0) {
+        regFile[usage.rd] = result;
+      }
+    }
+  });
+
+  return states;
 };
 
 const calculateNextState = (currentState: SimulationState): SimulationState => {
@@ -286,11 +394,19 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
     return currentState;
   }
 
+  console.log(
+    `>>> [calculateNextState] Ciclo=${currentState.currentCycle} | predictorState.currentPrediction=`,
+    currentState.predictorState.currentPrediction,
+    "| missesRemaining=",
+    currentState.predictorState.missesRemaining,
+    "| mode=",
+    currentState.branchConfig.mode
+  );
+
   const nextCycle = currentState.currentCycle + 1;
   const newInstructionStages: Record<number, number | null> = {};
-  let activeInstructions = 0;
-
   let newStallCycles = currentState.currentStallCycles;
+
   if (newStallCycles > 0) {
     newStallCycles--;
     return {
@@ -302,9 +418,14 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
   }
 
   let totalStallCycles = 0;
-  Object.values(currentState.stalls).forEach((stalls) => {
-    totalStallCycles += stalls;
+  Object.values(currentState.stalls).forEach((s) => {
+    totalStallCycles += s;
   });
+
+  const updatedBranchMisses = { ...currentState.branchMisses };
+  const updatedBranchStateIndex = { ...currentState.branchStateIndex };
+  const updatedPredictor: PredictorState = { ...currentState.predictorState };
+  let totalMissCount = currentState.missCount;
 
   currentState.instructions.forEach((_, index) => {
     const precedingStalls = calculatePrecedingStalls(
@@ -315,7 +436,58 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
 
     if (stageIndex >= 0 && stageIndex < currentState.stageCount) {
       newInstructionStages[index] = stageIndex;
-      activeInstructions++;
+
+      const usage = currentState.registerUsage[index];
+      if (usage.isBranch && stageIndex === 1) {
+        const threshold = currentState.branchConfig.missThreshold;
+        const currPred = currentState.predictorState.currentPrediction;
+        const missesRem = currentState.predictorState.missesRemaining;
+        let stateIdx: number;
+        if (currPred) {
+          stateIdx = threshold - missesRem + 1;
+        } else {
+          stateIdx = threshold + (threshold - missesRem + 1);
+        }
+        updatedBranchStateIndex[index] = stateIdx;
+
+        const regState = currentState.registerFileStates[index];
+        const rsVal = regState[usage.rs] ?? 0;
+        const rtVal = regState[usage.rt] ?? 0;
+        let actualTaken = false;
+        if (usage.branchType === "BEQ") {
+          actualTaken = rsVal === rtVal;
+        } else if (usage.branchType === "BNE") {
+          actualTaken = rsVal !== rtVal;
+        }
+
+        const prediction = updatedPredictor.currentPrediction;
+
+        if (prediction !== actualTaken) {
+          totalMissCount++;
+          updatedBranchMisses[index] = true;
+
+          if (currentState.branchConfig.mode === "machine") {
+            updatedPredictor.missesRemaining -= 1;
+            if (updatedPredictor.missesRemaining <= 0) {
+              updatedPredictor.currentPrediction = !updatedPredictor.currentPrediction;
+              updatedPredictor.missesRemaining =
+                currentState.branchConfig.missThreshold;
+            }
+          }
+
+        } else {
+          updatedBranchMisses[index] = false;
+
+          if (currentState.branchConfig.mode === "machine") {
+            if (!prediction) {
+              updatedPredictor.missesRemaining = Math.min(
+                updatedPredictor.missesRemaining + 1,
+                currentState.branchConfig.missThreshold
+              );
+            }
+          }
+        }
+      }
 
       if (
         stageIndex === 1 &&
@@ -336,7 +508,6 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
         1 +
         totalStallCycles
       : 0;
-
   const isFinished = nextCycle > completionCycle;
   const isRunning = !isFinished;
 
@@ -347,12 +518,17 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
     isRunning: isRunning,
     isFinished: isFinished,
     currentStallCycles: newStallCycles,
+    predictorState: updatedPredictor,
+    missCount: totalMissCount,
+    branchMisses: updatedBranchMisses,
+    branchStateIndex: updatedBranchStateIndex,
   };
 };
 
 export function SimulationProvider({ children }: PropsWithChildren) {
-  const [simulationState, setSimulationState] =
-    useState<SimulationState>(initialState);
+  const [simulationState, setSimulationState] = useState<SimulationState>(
+    initialBinaryState
+  );
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
   const clearTimer = () => {
@@ -379,73 +555,201 @@ export function SimulationProvider({ children }: PropsWithChildren) {
 
   const resetSimulation = useCallback(() => {
     clearTimer();
-    setSimulationState((prevState) => ({
-      ...initialState,
-      forwardingEnabled: prevState.forwardingEnabled,
-      stallsEnabled: prevState.stallsEnabled,
-    }));
+    setSimulationState((prevState) => {
+      let initialMisses: number;
+      if (prevState.branchConfig.mode === "machine") {
+        initialMisses = prevState.branchConfig.initialPrediction
+          ? prevState.branchConfig.missThreshold
+          : 1;
+      } else {
+        initialMisses = 0;
+      }
+
+      return {
+        ...initialBinaryState,
+        forwardingEnabled: prevState.forwardingEnabled,
+        stallsEnabled: prevState.stallsEnabled,
+        branchConfig: prevState.branchConfig,
+        predictorState: {
+          currentPrediction: prevState.branchConfig.initialPrediction,
+          missesRemaining: initialMisses,
+        },
+      };
+    });
   }, []);
 
   const startSimulation = useCallback(
-    (submittedInstructions: string[]) => {
-      clearTimer(); // Clear previous timer just in case
+    (submittedInstructions: string[], branchConfig: BranchConfig) => {
+      clearTimer();
       if (submittedInstructions.length === 0) {
-        resetSimulation(); // Reset if no instructions submitted
+        resetSimulation();
         return;
       }
 
-      // Parse instructions to extract register usage
-      const registerUsage: Record<number, RegisterUsage> = {};
+      const registerUsageOriginal: Record<number, RegisterUsage> = {};
       submittedInstructions.forEach((inst, index) => {
-        registerUsage[index] = parseInstruction(inst);
+        registerUsageOriginal[index] = parseInstruction(inst);
       });
 
-      // Detect hazards and determine forwarding/stalls
-      const [hazards, forwardings, stalls] = detectHazards(
+      const regFileStatesOriginal = simulateRegisterFiles(
         submittedInstructions,
-        registerUsage,
+        registerUsageOriginal
+      );
+
+      const executedOriginalIndices: number[] = [];
+      const originalTargetSet = new Set<number>();
+
+      let i = 0;
+      const n = submittedInstructions.length;
+      while (i < n) {
+        const usage = registerUsageOriginal[i];
+        if (!executedOriginalIndices.includes(i)) {
+          executedOriginalIndices.push(i);
+        }
+
+        if (usage.isBranch && typeof usage.immediate === "number") {
+          const regState = regFileStatesOriginal[i];
+          const rsVal = regState[usage.rs] ?? 0;
+          const rtVal = regState[usage.rt] ?? 0;
+          let actualTaken = false;
+          if (usage.branchType === "BEQ") {
+            actualTaken = rsVal === rtVal;
+          } else if (usage.branchType === "BNE") {
+            actualTaken = rsVal !== rtVal;
+          }
+
+          const predictedTaken = branchConfig.initialPrediction;
+
+          if (actualTaken) {
+            if (!predictedTaken) {
+              const fallThroughIdx = i + 1;
+              if (fallThroughIdx < n && !executedOriginalIndices.includes(fallThroughIdx)) {
+                executedOriginalIndices.push(fallThroughIdx);
+              }
+            }
+            const targetOriginalIndex = i + 1 + usage.immediate;
+            const nextI = Math.max(0, Math.min(n - 1, targetOriginalIndex));
+            originalTargetSet.add(nextI);
+            if (nextI < n && !executedOriginalIndices.includes(nextI)) {
+              executedOriginalIndices.push(nextI);
+            }
+            i = nextI;
+          } else {
+            if (predictedTaken) {
+              const targetSpecIdx = i + 1 + usage.immediate;
+              if (
+                targetSpecIdx >= 0 &&
+                targetSpecIdx < n &&
+                !executedOriginalIndices.includes(targetSpecIdx)
+              ) {
+                executedOriginalIndices.push(targetSpecIdx);
+              }
+            }
+            i = i + 1;
+          }
+        } else {
+          i = i + 1;
+        }
+      }
+
+      const filteredInstructions: string[] = [];
+      const registerUsageFiltered: Record<number, RegisterUsage> = {};
+      const filteredTargets: Record<number, boolean> = {};
+
+      executedOriginalIndices.forEach((origIdx, newIdx) => {
+        filteredInstructions.push(submittedInstructions[origIdx]);
+        registerUsageFiltered[newIdx] = registerUsageOriginal[origIdx];
+        if (originalTargetSet.has(origIdx)) {
+          filteredTargets[newIdx] = true;
+        }
+      });
+
+      const regFileStatesFiltered = simulateRegisterFiles(
+        filteredInstructions,
+        registerUsageFiltered
+      );
+
+      const [hazards, forwardings, stalls] = detectHazards(
+        filteredInstructions,
+        registerUsageFiltered,
         simulationState.forwardingEnabled,
         simulationState.stallsEnabled
       );
 
-      // Calculate total stall cycles
-      let totalStallCycles = 0;
-      Object.values(stalls).forEach((stall) => {
-        totalStallCycles += stall;
+      let totalStalls = 0;
+      Object.values(stalls).forEach((s) => {
+        totalStalls += s;
       });
 
+      const filteredCount = filteredInstructions.length;
       const calculatedMaxCycles =
-        submittedInstructions.length +
-        DEFAULT_STAGE_COUNT -
-        1 +
-        totalStallCycles;
-      const initialStages: Record<number, number | null> = {};
+        filteredCount + DEFAULT_STAGE_COUNT - 1 + totalStalls;
 
-      // Initialize stages for cycle 1
-      submittedInstructions.forEach((_, index) => {
-        const stageIndex = 1 - index - 1; // Calculate stage for cycle 1
-        if (stageIndex >= 0 && stageIndex < DEFAULT_STAGE_COUNT) {
-          initialStages[index] = stageIndex;
-        } else {
-          initialStages[index] = null;
+      const initialStages: Record<number, number | null> = {};
+      for (let idx = 0; idx < filteredCount; idx++) {
+        const stageIdx = 1 - idx - 1;
+        initialStages[idx] =
+          stageIdx >= 0 && stageIdx < DEFAULT_STAGE_COUNT
+            ? stageIdx
+            : null;
+      }
+
+      const branchMissesInit: Record<number, boolean> = {};
+      const branchStateIndexInit: Record<number, number> = {};
+      for (let idx = 0; idx < filteredCount; idx++) {
+        branchMissesInit[idx] = false;
+        branchStateIndexInit[idx] = 0;
+      }
+
+      console.log(
+        ">>> SimulationContext.startSimulation (filtrado) recibe branchConfig =",
+        branchConfig
+      );
+      console.log(
+        "      → predictor inicial =",
+        {
+          currentPrediction: branchConfig.initialPrediction,
+          missesRemaining: branchConfig.missThreshold,
         }
-      });
+      );
+
+      let initialMisses: number;
+      if (branchConfig.mode === "machine") {
+        initialMisses = branchConfig.initialPrediction
+          ? branchConfig.missThreshold
+          : 1;
+      } else {
+        initialMisses = 0;
+      }
 
       setSimulationState({
-        instructions: submittedInstructions,
+        instructions: filteredInstructions,
         currentCycle: 1,
         maxCycles: calculatedMaxCycles,
         isRunning: true,
         stageCount: DEFAULT_STAGE_COUNT,
         instructionStages: initialStages,
         isFinished: false,
-        registerUsage,
+
+        registerUsage: registerUsageFiltered,
         hazards,
         forwardings,
         stalls,
         currentStallCycles: 0,
         forwardingEnabled: simulationState.forwardingEnabled,
         stallsEnabled: simulationState.stallsEnabled,
+
+        branchConfig: branchConfig,
+        predictorState: {
+          currentPrediction: branchConfig.initialPrediction,
+          missesRemaining: initialMisses,
+        },
+        missCount: 0,
+        branchMisses: branchMissesInit,
+        branchStateIndex: branchStateIndexInit,
+        registerFileStates: regFileStatesFiltered,
+
+        branchTakenTargets: filteredTargets,
       });
     },
     [
@@ -456,37 +760,33 @@ export function SimulationProvider({ children }: PropsWithChildren) {
   );
 
   const pauseSimulation = () => {
-    setSimulationState((prevState) => {
-      if (prevState.isRunning) {
+    setSimulationState((prev) => {
+      if (prev.isRunning) {
         clearTimer();
-        return { ...prevState, isRunning: false };
+        return { ...prev, isRunning: false };
       }
-      return prevState;
+      return prev;
     });
   };
 
   const resumeSimulation = () => {
-    setSimulationState((prevState) => {
-      if (
-        !prevState.isRunning &&
-        prevState.currentCycle > 0 &&
-        !prevState.isFinished
-      ) {
-        return { ...prevState, isRunning: true };
+    setSimulationState((prev) => {
+      if (!prev.isRunning && prev.currentCycle > 0 && !prev.isFinished) {
+        return { ...prev, isRunning: true };
       }
-      return prevState;
+      return prev;
     });
   };
 
   const setForwardingEnabled = (enabled: boolean) => {
-    setSimulationState((prevState) => {
-      return { ...prevState, forwardingEnabled: enabled };
+    setSimulationState((prev) => {
+      return { ...prev, forwardingEnabled: enabled };
     });
   };
 
   const setStallsEnabled = (enabled: boolean) => {
-    setSimulationState((prevState) => {
-      return { ...prevState, stallsEnabled: enabled };
+    setSimulationState((prev) => {
+      return { ...prev, stallsEnabled: enabled };
     });
   };
 
@@ -499,9 +799,7 @@ export function SimulationProvider({ children }: PropsWithChildren) {
     return clearTimer;
   }, [simulationState.isRunning, simulationState.isFinished, runClock]);
 
-  // State value derived directly from simulationState
   const stateValue: SimulationState = simulationState;
-
   const actionsValue: SimulationActions = useMemo(
     () => ({
       startSimulation,
@@ -523,7 +821,6 @@ export function SimulationProvider({ children }: PropsWithChildren) {
   );
 }
 
-// Custom hooks for easy context consumption
 export function useSimulationState() {
   const context = useContext(SimulationStateContext);
   if (context === undefined) {
