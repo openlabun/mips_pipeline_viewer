@@ -6,7 +6,7 @@ A javascript based MIPS simulator that can simulate the MIPS assembly code.
 To run on dev mode, run the following command
 ```bash
  cd app
- nmp install
+ npm install
  npm run dev 
 ```
 
