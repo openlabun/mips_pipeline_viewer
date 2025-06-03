@@ -606,6 +606,21 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
           case 42: // SLT
             result = rsVal < rtVal ? 1 : 0;
             break;
+          case 43: // SLTU
+            result = (rsVal >>> 0) < (rtVal >>> 0) ? 1 : 0;
+            break;
+          case 8: // JR
+            result = rsVal; // Jump target address
+            break;
+          case 4: // SLLV
+            result = rtVal << (rsVal & 0x1f);
+            break;
+          case 6: // SRLV
+            result = rtVal >>> (rsVal & 0x1f);
+            break;
+          case 7: // SRAV
+            result = rtVal >> (rsVal & 0x1f);
+            break;
         }
         newAluResults[idx] = result;
       } else if (usage.type === "I") {
