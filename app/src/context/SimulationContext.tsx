@@ -1,6 +1,8 @@
 // src/context/SimulationContext.tsx
 "use client";
 
+const DEBUG = process.env.NODE_ENV === 'development';
+
 import {
   createContext,
   // ... (otras importaciones sin cambios)
@@ -369,7 +371,11 @@ const detectHazards = (
 // Asegúrate que hexToBinary y parseInstruction estén definidos.
 
 const calculateNextState = (prevState: SimulationState): SimulationState => {
-  if (!prevState.isRunning || prevState.isFinished) {
+  if (!prevState.isRunning || prevState.isFinished || prevState.currentCycle >= prevState.maxCycles) {
+    if (prevState.currentCycle >= prevState.maxCycles && !prevState.isFinished) {
+      console.warn('Simulation stopped: reached maximum cycles limit');
+      return { ...prevState, isFinished: true, isRunning: false };
+    }
     return prevState;
   }
 
@@ -654,17 +660,44 @@ const calculateNextState = (prevState: SimulationState): SimulationState => {
   state.instructionStages = stagesAfterCurrentCycleExecution;
   state.pipelineLatches = tempNextLatches; // Estos son los latches al *final* del ciclo actual
 
-  // ... (lógica de isFinished) ...
+  // Modificar la lógica de finalización
   let activeInstructionsCount = 0;
-  Object.values(state.instructionStages).forEach(stage => { if (stage !== null) activeInstructionsCount++; });
+  let lastActiveInstructionIndex = -1;
+  let totalFlushes = 0;
+
+  // Calcular flushes totales hasta ahora
+  Object.values(state.hazards).forEach(hazard => {
+    if (hazard?.type === 'Control') {
+      totalFlushes += 2; // Cada mispredict causa 2 ciclos de flush
+    }
+  });
+
+  Object.entries(state.instructionStages).forEach(([idxStr, stage]) => {
+    const idx = parseInt(idxStr);
+    if (stage !== null) {
+      activeInstructionsCount++;
+      lastActiveInstructionIndex = Math.max(lastActiveInstructionIndex, idx);
+    }
+  });
+
   const noMoreInstructionsToFetch = state.nextPCToFetch >= (INSTRUCTION_START_ADDRESS + state.instructions.length * 4);
-  if (activeInstructionsCount === 0 && (noMoreInstructionsToFetch || state.instructions.length === 0)) {
-    if (!mispredictJustOccurredThisCycle && !dataStallActivatedByIDThisCycle && state.currentDataStallCycles === 0 && state.branchMispredictActiveStallCycles === 0) {
-        state.isFinished = true; state.isRunning = false;
-        console.log(`SIM_CTX Cycle: ${state.currentCycle} - SIMULATION FINISHED.`);
+  const allInstructionsFinished = lastActiveInstructionIndex === -1 && noMoreInstructionsToFetch;
+  const shouldFinish = (allInstructionsFinished && !state.currentDataStallCycles && !state.branchMispredictActiveStallCycles) ||
+                      state.currentCycle >= state.maxCycles;
+
+  if (shouldFinish && 
+      !mispredictJustOccurredThisCycle && 
+      !dataStallActivatedByIDThisCycle && 
+      state.currentDataStallCycles === 0 && 
+      state.branchMispredictActiveStallCycles === 0) {
+    state.isFinished = true;
+    state.isRunning = false;
+    if (DEBUG) {
+      console.log(`SIM_CTX Cycle: ${state.currentCycle} - SIMULATION FINISHED.`);
+      console.log(`Total flushes: ${totalFlushes}, Active instructions: ${activeInstructionsCount}`);
     }
   }
-  
+
   console.log(`SIM_CTX Cycle: ${state.currentCycle} END, instructionStages: ${JSON.stringify(state.instructionStages, null, 2)}`);
   console.log(`PC: 0x${state.PC.toString(16)}, nextPCToFetch: 0x${state.nextPCToFetch.toString(16)}, DataStalls: ${state.currentDataStallCycles}, MispredStalls: ${state.branchMispredictActiveStallCycles}`);
   console.log(`--------------------------------------------------------------------`);
@@ -749,6 +782,16 @@ export function SimulationProvider({ children }: PropsWithChildren) {
         initialState.pipelineLatches // Vacío al inicio
       );
 
+      // Calcular un límite máximo de ciclos más generoso
+      const baseMaxCycles = submittedInstructions.length + STAGE_NAMES.length - 1;
+      const stallCycles = Object.values(initialDataStalls).reduce((sum, s) => sum + s, 0);
+      const potentialFlushCycles = submittedInstructions.length * 2; // Asumiendo el peor caso
+      const MAX_SAFE_CYCLES = submittedInstructions.length * 20; // Factor de seguridad
+      const calculatedMaxCycles = Math.min(
+        baseMaxCycles + stallCycles + potentialFlushCycles,
+        MAX_SAFE_CYCLES
+      );
+
       setSimulationState(prevState => ({
         ...initialState, // Base limpia
         PC: INSTRUCTION_START_ADDRESS,
@@ -771,6 +814,7 @@ export function SimulationProvider({ children }: PropsWithChildren) {
         currentCycle: 0,
         isRunning: true,
         isFinished: false,
+        maxCycles: calculatedMaxCycles,
       }));
     },
     [resetSimulation, simulationState.forwardingEnabled, simulationState.stallsEnabled]
