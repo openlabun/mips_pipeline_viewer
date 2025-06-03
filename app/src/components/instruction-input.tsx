@@ -24,6 +24,7 @@ import {
   Zap,
   StopCircle,
   Target,
+  Cloud,
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 
@@ -47,6 +48,7 @@ export function InstructionInput({
     resumeSimulation,
     setForwardingEnabled,
     setStallsEnabled,
+    setFlushEnabled,
     setBranchPredictionEnabled,
     setBranchMode,
     setStateMachineConfig,
@@ -57,8 +59,10 @@ export function InstructionInput({
     instructions,
     hazards,
     stalls,
+    flushes,
     forwardingEnabled,
     stallsEnabled,
+    flushEnabled,
     branchPredictionEnabled,
     forwardings,
     branchMode,
@@ -83,6 +87,7 @@ export function InstructionInput({
     (h) => h.type !== "NONE"
   ).length;
   const stallCount = Object.values(stalls).reduce((sum, s) => sum + s, 0);
+  const flushCount = Object.values(flushes).filter(Boolean).length;
   const forwardingCount = Object.values(forwardings).filter(
     (f) => f.length > 0
   ).length;
@@ -138,21 +143,31 @@ export function InstructionInput({
     if (isFinished) return;
     setForwardingEnabled(checked);
   };
+
   // Function to handle the change of stalls
   const handleStallsChange = (checked: boolean) => {
     if (isFinished) return;
-    setStallsEnabled(checked);
-
-    // Deshabilitar forwarding si se desactivan stalls
+    setStallsEnabled(checked); // Disable forwarding if stalls are disabled
     if (!checked) {
       setForwardingEnabled(false);
     }
   };
-
+  // Function to handle the change of flush
+  const handleFlushChange = (checked: boolean) => {
+    if (isFinished) return;
+    // Only allow enabling flush if branch prediction is enabled
+    if (checked && !branchPredictionEnabled) return;
+    setFlushEnabled(checked);
+  };
   // Function to handle the change of branch prediction
   const handleBranchPredictionChange = (checked: boolean) => {
     if (isFinished) return;
     setBranchPredictionEnabled(checked);
+
+    // Disable flush if branch prediction is disabled
+    if (!checked) {
+      setFlushEnabled(false);
+    }
   };
 
   const handleBranchModeChange = (
@@ -220,7 +235,7 @@ export function InstructionInput({
             <Label htmlFor="stalls-mode" className="text-sm">
               Enable Hazard Detection & Stalls
             </Label>
-          </div>
+          </div>{" "}
           {/* Forwarding configuration switch - only available if stalls are enabled */}
           <div className="flex items-center space-x-2">
             <Switch
@@ -237,9 +252,36 @@ export function InstructionInput({
                 !stallsEnabled ? "text-muted-foreground" : ""
               }`}
             >
-              Enable Data Forwarding
+              Enable Data Forwarding{" "}
             </Label>
-          </div>{" "}
+          </div>
+          {/* Flush configuration switch - only available if branch prediction is enabled */}
+          <div className="flex items-center space-x-2">
+            <Switch
+              id="flush-mode"
+              checked={flushEnabled && branchPredictionEnabled}
+              onCheckedChange={handleFlushChange}
+              disabled={
+                disableInputAndStart ||
+                configDisabled ||
+                !branchPredictionEnabled
+              }
+            />
+            <Label
+              htmlFor="flush-mode"
+              className={`text-sm ${
+                !branchPredictionEnabled ? "text-muted-foreground" : ""
+              }`}
+            >
+              Enable Pipeline Flush
+            </Label>
+          </div>
+          {!branchPredictionEnabled && (
+            <p className="text-xs text-muted-foreground">
+              Pipeline flush requires branch prediction to be enabled, as
+              flushes occur during branch mispredictions.
+            </p>
+          )}
           {!stallsEnabled && (
             <p className="text-xs text-muted-foreground">
               When hazard detection is disabled, all instructions execute in
@@ -263,9 +305,8 @@ export function InstructionInput({
           {/* Branch prediction mode selection - only available if branch prediction is enabled */}
           {branchPredictionEnabled && (
             <div className="border-t border-muted pt-2">
-              <h4 className="text-sm font-medium">Branch Prediction Mode</h4>
+              <h4 className="text-sm font-medium">Branch Prediction Mode</h4>{" "}
               <div className="mt-2 grid gap-2">
-                {" "}
                 <select
                   className="border rounded px-2 py-1 text-sm"
                   value={branchMode}
@@ -358,6 +399,15 @@ export function InstructionInput({
                     <span>{stallCount} stall cycles added</span>
                   </div>
                 )}{" "}
+                {flushEnabled && flushCount > 0 && (
+                  <div className="flex items-center text-sm">
+                    <Cloud className="w-4 h-4 mr-2 text-orange-500" />
+                    <span>
+                      {flushCount} instruction{flushCount > 1 ? "s" : ""}{" "}
+                      flushed
+                    </span>
+                  </div>
+                )}
                 <div className="flex items-center text-sm">
                   <Zap className="w-4 h-4 mr-2 text-green-500" />
                   <span>

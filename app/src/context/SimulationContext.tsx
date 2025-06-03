@@ -64,11 +64,12 @@ interface SimulationState {
   hazards: Record<number, HazardInfo>;
   forwardings: Record<number, ForwardingInfo[]>;
   stalls: Record<number, number>;
+  flushes: Record<number, boolean>; // Track which instructions are flushed
 
   currentStallCycles: number;
-
   forwardingEnabled: boolean;
   stallsEnabled: boolean; // Add this new option
+  flushEnabled: boolean; // Add flush enabled flag
   registerFile: number[]; // Add register file state
 
   memory: Record<number, number>; // Add memory state
@@ -92,6 +93,7 @@ interface SimulationActions {
   resumeSimulation: () => void;
   setForwardingEnabled: (enabled: boolean) => void;
   setStallsEnabled: (enabled: boolean) => void;
+  setFlushEnabled: (enabled: boolean) => void;
   setBranchPredictionEnabled: (enabled: boolean) => void;
   setBranchMode: (mode: SimulationState["branchMode"]) => void;
   setStateMachineConfig: (
@@ -122,9 +124,11 @@ const initialState: SimulationState = {
   hazards: {},
   forwardings: {},
   stalls: {},
+  flushes: {},
   currentStallCycles: 0,
   forwardingEnabled: true,
   stallsEnabled: true, // Add this new option
+  flushEnabled: true, // Flush enabled by default
 
   registerFile: Array(32).fill(0),
   memory: {}, // Simulated memory, initially empty
@@ -359,6 +363,7 @@ function handleBranchAtID(
     registerUsage: Record<number, RegisterUsage>;
     registerFile: number[];
     branchPredictionEnabled: boolean;
+    flushEnabled: boolean;
     branchMode: SimulationState["branchMode"];
     initialPrediction: boolean;
     failThreshold: number;
@@ -367,7 +372,8 @@ function handleBranchAtID(
   },
   newBranchPredictionState: Record<string, BranchPredictionEntry>,
   newBranchOutcome: Record<number, boolean>,
-  branchMissCountRef: { value: number }
+  branchMissCountRef: { value: number },
+  newFlushes: Record<number, boolean>
 ) {
   const usage = state.registerUsage[idx];
   // BEQ (opcode 4) and BNE (opcode 5) are the only branch instructions
@@ -407,9 +413,15 @@ function handleBranchAtID(
     } // 3) Compare prediction vs reality
     const wasCorrect = predictedTaken === isTakenReal;
     newBranchOutcome[idx] = wasCorrect;
-
     if (!wasCorrect) {
       branchMissCountRef.value += 1;
+
+      // If flush is enabled and there's a branch misprediction, mark for flush in next cycle
+      // This ensures the flush happens AFTER the ID stage has completed processing
+      if (state.flushEnabled) {
+        // Flush the branch instruction itself to show the misprediction
+        newFlushes[idx] = true;
+      }
     }
 
     // 4) In STATE_MACHINE, update the prediction state
@@ -463,6 +475,9 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
   const newBranchOutcome: Record<number, boolean> = {
     ...currentState.branchOutcome,
   };
+  const newFlushes: Record<number, boolean> = {
+    ...currentState.flushes,
+  };
   const branchMissCountRef = { value: currentState.branchMissCount };
   let newStallCycles = currentState.currentStallCycles;
   if (newStallCycles > 0) {
@@ -486,7 +501,12 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
 
     if (prevStage === -1) {
       // Instruction hasn't entered pipeline yet
-      const idealStageIndex = nextCycle - idx - 1;
+      // Calculate when this instruction should enter considering preceding stalls
+      const precedingStalls = calculatePrecedingStalls(
+        currentState.stalls,
+        idx
+      );
+      const idealStageIndex = nextCycle - idx - 1 - precedingStalls;
       if (idealStageIndex >= 0 && idealStageIndex < currentState.stageCount) {
         newStage = idealStageIndex;
       } else {
@@ -599,8 +619,7 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
           newAluResults[idx] = rsVal + imm;
         }
       }
-    }
-    // ID_STAGE is before EX_STAGE
+    } // ID_STAGE is before EX_STAGE
     if (newStage === ID_STAGE && (prevStage === null || prevStage < ID_STAGE)) {
       handleBranchAtID(
         idx,
@@ -608,6 +627,7 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
           registerUsage: currentState.registerUsage,
           registerFile: newRegisterFile,
           branchPredictionEnabled: currentState.branchPredictionEnabled,
+          flushEnabled: currentState.flushEnabled,
           branchMode: currentState.branchMode,
           initialPrediction: currentState.initialPrediction,
           failThreshold: currentState.failThreshold,
@@ -616,7 +636,8 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
         },
         newBranchPredictionState,
         newBranchOutcome,
-        branchMissCountRef
+        branchMissCountRef,
+        newFlushes
       );
     }
     if (
@@ -627,7 +648,6 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
       newStallCycles = currentState.stalls[idx];
     }
   });
-
   const completionCycle =
     currentState.instructions.length > 0
       ? currentState.instructions.length +
@@ -635,10 +655,12 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
         1 +
         totalStallCycles
       : 0;
+  // Keep all flush states permanently to show which instructions were flushed
+  // Flushes should never be cleared as they represent instructions that were discarded
+  const finalFlushes: Record<number, boolean> = { ...newFlushes };
 
   const isFinished = nextCycle > completionCycle;
   const isRunning = !isFinished;
-
   return {
     ...currentState,
     currentCycle: isFinished ? completionCycle : nextCycle,
@@ -653,6 +675,7 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
     branchPredictionState: newBranchPredictionState,
     branchOutcome: newBranchOutcome,
     branchMissCount: branchMissCountRef.value,
+    flushes: finalFlushes,
   };
 };
 
@@ -688,6 +711,7 @@ export function SimulationProvider({ children }: PropsWithChildren) {
       ...initialState,
       forwardingEnabled: prevState.forwardingEnabled,
       stallsEnabled: prevState.stallsEnabled,
+      flushEnabled: prevState.flushEnabled,
       branchPredictionEnabled: prevState.branchPredictionEnabled,
       branchMode: prevState.branchMode,
       initialPrediction: prevState.initialPrediction,
@@ -748,9 +772,11 @@ export function SimulationProvider({ children }: PropsWithChildren) {
         hazards,
         forwardings,
         stalls,
+        flushes: {},
         currentStallCycles: 0,
         forwardingEnabled: prev.forwardingEnabled,
         stallsEnabled: prev.stallsEnabled,
+        flushEnabled: prev.flushEnabled,
 
         // Memory and register file initialization
         registerFile: Array(32).fill(0),
@@ -775,6 +801,7 @@ export function SimulationProvider({ children }: PropsWithChildren) {
       resetSimulation,
       simulationState.forwardingEnabled,
       simulationState.stallsEnabled,
+      simulationState.flushEnabled,
       simulationState.branchPredictionEnabled,
     ]
   );
@@ -810,6 +837,16 @@ export function SimulationProvider({ children }: PropsWithChildren) {
   const setStallsEnabled = (enabled: boolean) => {
     setSimulationState((prevState) => {
       return { ...prevState, stallsEnabled: enabled };
+    });
+  };
+
+  const setFlushEnabled = (enabled: boolean) => {
+    setSimulationState((prevState) => {
+      return {
+        ...prevState,
+        flushEnabled: enabled,
+        flushes: {},
+      };
     });
   };
 
@@ -865,6 +902,7 @@ export function SimulationProvider({ children }: PropsWithChildren) {
       resumeSimulation,
       setForwardingEnabled,
       setStallsEnabled,
+      setFlushEnabled,
       setBranchPredictionEnabled,
       setBranchMode,
       setStateMachineConfig,
@@ -876,6 +914,7 @@ export function SimulationProvider({ children }: PropsWithChildren) {
       resumeSimulation,
       setForwardingEnabled,
       setStallsEnabled,
+      setFlushEnabled,
       setBranchPredictionEnabled,
       setBranchMode,
       setStateMachineConfig,
