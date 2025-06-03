@@ -7,60 +7,58 @@ import { Separator } from '@/components/ui/separator';
 import {
   useSimulationState,
   useSimulationActions,
-} from '@/context/SimulationContext'; // Import context hooks
+} from '@/context/SimulationContext';
 
 export default function Home() {
-  // Get state and actions from context
   const { instructions, isRunning, currentCycle, maxCycles, isFinished } =
     useSimulationState();
   const { startSimulation, resetSimulation } = useSimulationActions();
 
-  // Simulation has started if cycle > 0
   const hasStarted = currentCycle > 0;
 
   return (
-    <div className='min-h-screen bg-gradient-to-br from-blue-50/50 via-white to-indigo-50/50'>
-      <div className='container mx-auto p-4 md:p-8 flex flex-col items-center space-y-8'>
-        <header className='text-center space-y-4 pt-8'>
-          <h1 className='text-4xl md:text-5xl font-bold text-transparent bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text font-montserrat'>
-            MIPS Pipeline Viewer
+    <div className="min-h-screen bg-gradient-to-b from-indigo-50/60 via-white to-blue-100/40">
+      <div className="max-w-6xl mx-auto px-6 py-12 flex flex-col items-center gap-10">
+        <header className="text-center space-y-6 pt-10">
+          <h1 className="text-3xl md:text-5xl font-extrabold text-transparent bg-gradient-to-r from-indigo-700 to-blue-700 bg-clip-text font-sans">
+            Visualizador de Pipeline MIPS
           </h1>
-          <p className='text-lg text-gray-600 font-montserrat font-medium max-w-2xl mx-auto leading-relaxed'>
-            Visualize the flow of MIPS instructions through a 5-stage pipeline
-            with advanced hazard detection and forwarding mechanisms.
+          <p className="text-base md:text-lg text-gray-700 font-sans font-medium max-w-3xl mx-auto leading-loose">
+            Visualize the flow of MIPS instructions through a 5-stage pipeline with advanced hazard detection and forwarding mechanisms.
           </p>
-          <div className='flex justify-center space-x-8 text-sm text-gray-500 font-montserrat'>
-            <div className='flex items-center space-x-2'>
-              <div className='w-3 h-3 bg-blue-500 rounded-full'></div>
+          <div className="flex flex-wrap justify-center gap-6 text-sm text-gray-500 font-sans">
+            <div className="flex items-center gap-2">
+              <span className="w-3 h-3 bg-blue-600 rounded-full"></span>
               <span>Real-time Simulation</span>
             </div>
-            <div className='flex items-center space-x-2'>
-              <div className='w-3 h-3 bg-green-500 rounded-full'></div>
+            <div className="flex items-center gap-2">
+              <span className="w-3 h-3 bg-green-600 rounded-full"></span>
               <span>Data Forwarding</span>
             </div>
-            <div className='flex items-center space-x-2'>
-              <div className='w-3 h-3 bg-red-500 rounded-full'></div>
+            <div className="flex items-center gap-2">
+              <span className="w-3 h-3 bg-red-600 rounded-full"></span>
               <span>Hazard Detection</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="w-3 h-3 bg-purple-600 rounded-full"></span>
+              <span>Branch jump </span>
             </div>
           </div>
         </header>
 
-        {/* Pass context actions/state down */}
         <div className='w-full max-w-md'>
           <InstructionInput
             onInstructionsSubmit={startSimulation}
             onReset={resetSimulation}
-            isRunning={isRunning} // isRunning is needed for button state/icons
+            isRunning={isRunning}
           />
         </div>
 
         <Separator className='my-8 w-full max-w-4xl bg-gradient-to-r from-transparent via-gray-300 to-transparent h-px' />
 
-        {/* Conditionally render visualization and cycle info only if instructions exist */}
         {instructions.length > 0 && (
           <div className='w-full space-y-6'>
             <PipelineVisualization />
-            {/* Display cycle info below the visualization */}
             {maxCycles > 0 && (
               <div className='text-center'>
                 <div className='inline-flex items-center space-x-4 bg-white/80 backdrop-blur-sm rounded-full px-6 py-3 shadow-lg border border-gray-200'>
@@ -99,7 +97,6 @@ export default function Home() {
           </div>
         )}
 
-        {/* Show message if reset/never run and no instructions */}
         {!hasStarted && instructions.length === 0 && (
           <div className='text-center space-y-4 py-12'>
             <div className='text-6xl'>🚀</div>
@@ -113,7 +110,6 @@ export default function Home() {
           </div>
         )}
 
-        {/* Show different message if reset after a run */}
         {hasStarted && instructions.length === 0 && (
           <div className='text-center space-y-4 py-12'>
             <div className='text-6xl'>🔄</div>

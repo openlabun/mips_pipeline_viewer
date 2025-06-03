@@ -1,5 +1,4 @@
-// src/context/SimulationContext.tsx
-"use client"; // Add 'use client' directive
+"use client";
 
 import {
   createContext,
@@ -13,35 +12,49 @@ import {
 } from "react";
 import * as React from "react";
 
-// Define the stage names (optional, but good for clarity)
-const STAGE_NAMES = ["IF", "ID", "EX", "MEM", "WB"] as const;
-type StageName = (typeof STAGE_NAMES)[number];
+import { cambioboton, haybranch, labelsigno, saltobranch } from "@/components/instruction-input";
+import { setomabranch } from "@/components/instruction-input";
 
-type InstructionType = "R" | "I" | "J";
-type HazardType = "RAW" | "WAW" | "NONE";
+let pc: number = 0;
+let pipelineChangePending: boolean;
 
-interface RegisterUsage {
+export let alarma: boolean = false;
+export let misses: number = 0;
+export let botonn: boolean = false;
+
+console.log("Debug botonn init:", botonn);
+
+let currentBranchTakenState: boolean;
+let branchLogicEntryCounter = 2;
+
+const PIPELINE_STAGE_NAMES = ["IF", "ID", "EX", "MEM", "WB"] as const;
+type PipelineStageName = (typeof PIPELINE_STAGE_NAMES)[number];
+
+type InstructionFormatType = "R" | "I" | "J";
+type HazardSeverityType = "RAW" | "WAW" | "NONE";
+
+interface InstructionRegisterDetails {
   rs: number;
   rt: number;
   rd: number;
   opcode: number;
   funct: number;
-  type: InstructionType;
-  isLoad: boolean; // Add this to detect load instructions
+  type: InstructionFormatType;
+  isLoad: boolean;
 }
 
-interface HazardInfo {
-  type: HazardType;
+interface HazardEncounteredInfo {
+  type: HazardSeverityType;
   description: string;
   canForward: boolean;
   stallCycles: number;
 }
 
-interface ForwardingInfo {
+interface ForwardingPathInfo {
   from: number;
   to: number;
-  fromStage: StageName;
-  toStage: StageName;
+  fromStage: PipelineStageName;
+  toStage: PipelineStageName;
   register: string;
 }
 
@@ -53,29 +66,26 @@ interface SimulationState {
   stageCount: number;
   instructionStages: Record<number, number | null>;
   isFinished: boolean;
-
-  registerUsage: Record<number, RegisterUsage>;
-  hazards: Record<number, HazardInfo>;
-  forwardings: Record<number, ForwardingInfo[]>;
+  registerUsage: Record<number, InstructionRegisterDetails>;
+  hazards: Record<number, HazardEncounteredInfo>;
+  forwardings: Record<number, ForwardingPathInfo[]>;
   stalls: Record<number, number>;
-
   currentStallCycles: number;
-
   forwardingEnabled: boolean;
-  stallsEnabled: boolean; // Add this new option
+  stallsEnabled: boolean;
+  branchEnabled?: boolean;
 }
 
-// Define the shape of the context actions
 interface SimulationActions {
   startSimulation: (submittedInstructions: string[]) => void;
   resetSimulation: () => void;
   pauseSimulation: () => void;
   resumeSimulation: () => void;
   setForwardingEnabled: (enabled: boolean) => void;
-  setStallsEnabled: (enabled: boolean) => void; // Add this new action
+  setStallsEnabled: (enabled: boolean) => void;
+  setBranchEnabled: (enabled: boolean) => void;
 }
 
-// Create the contexts
 const SimulationStateContext = createContext<SimulationState | undefined>(
   undefined
 );
@@ -83,14 +93,14 @@ const SimulationActionsContext = createContext<SimulationActions | undefined>(
   undefined
 );
 
-const DEFAULT_STAGE_COUNT = STAGE_NAMES.length; // Use length of defined stages
+const DEFAULT_PIPELINE_STAGE_COUNT = PIPELINE_STAGE_NAMES.length;
 
-const initialState: SimulationState = {
+const initialSimulationState: SimulationState = {
   instructions: [],
   currentCycle: 0,
   maxCycles: 0,
   isRunning: false,
-  stageCount: DEFAULT_STAGE_COUNT,
+  stageCount: DEFAULT_PIPELINE_STAGE_COUNT,
   instructionStages: {},
   isFinished: false,
   registerUsage: {},
@@ -99,16 +109,16 @@ const initialState: SimulationState = {
   stalls: {},
   currentStallCycles: 0,
   forwardingEnabled: true,
-  stallsEnabled: true, // Add this new option
+  stallsEnabled: true,
 };
 
-const parseInstruction = (hexInstruction: string): RegisterUsage => {
+const parseHexInstructionToDetails = (hexInstruction: string): InstructionRegisterDetails => {
   const binary = parseInt(hexInstruction, 16).toString(2).padStart(32, "0");
   const opcode = parseInt(binary.substring(0, 6), 2);
   const rs = parseInt(binary.substring(6, 11), 2);
   const rt = parseInt(binary.substring(11, 16), 2);
 
-  let type: InstructionType = "R";
+  let type: InstructionFormatType = "R";
   let rd = 0;
   let funct = 0;
   let isLoad = false;
@@ -123,35 +133,32 @@ const parseInstruction = (hexInstruction: string): RegisterUsage => {
     funct = 0;
   } else {
     type = "I";
-    // Check for load instructions (lw = 35, lh = 33, lb = 32, etc.)
     if (opcode >= 32 && opcode <= 37) {
-      rd = rt; // For loads, rt is the destination
+      rd = rt;
       isLoad = true;
     } else if (opcode >= 8 && opcode <= 15) {
-      rd = rt; // For immediate arithmetic, rt is the destination
+      rd = rt;
     } else {
       rd = 0;
     }
   }
-
   return { rs, rt, rd, opcode, funct, type, isLoad };
 };
 
-const detectHazards = (
+const analyzeHazardsAndForwarding = (
   instructions: string[],
-  registerUsage: Record<number, RegisterUsage>,
-  forwardingEnabled: boolean,
-  stallsEnabled: boolean
+  regUsage: Record<number, InstructionRegisterDetails>,
+  isForwardingAllowed: boolean,
+  isStallDetectionActive: boolean
 ): [
-  Record<number, HazardInfo>,
-  Record<number, ForwardingInfo[]>,
+  Record<number, HazardEncounteredInfo>,
+  Record<number, ForwardingPathInfo[]>,
   Record<number, number>
 ] => {
-  const hazards: Record<number, HazardInfo> = {};
-  const forwardings: Record<number, ForwardingInfo[]> = {};
+  const hazards: Record<number, HazardEncounteredInfo> = {};
+  const forwardings: Record<number, ForwardingPathInfo[]> = {};
   const stalls: Record<number, number> = {};
 
-  // Initialize all instructions with no hazard
   instructions.forEach((_, index) => {
     hazards[index] = {
       type: "NONE",
@@ -163,25 +170,20 @@ const detectHazards = (
     stalls[index] = 0;
   });
 
-  // If stalls are disabled, skip hazard detection entirely
-  if (!stallsEnabled) {
+  botonn = isStallDetectionActive;
+
+  if (!isStallDetectionActive) {
     return [hazards, forwardings, stalls];
   }
 
   for (let i = 1; i < instructions.length; i++) {
-    const currentInst = registerUsage[i];
-
-    // Skip if current instruction is a jump
+    const currentInst = regUsage[i];
     if (currentInst.type === "J") continue;
 
-    // Only check the immediately previous instruction (distance = 1)
     const j = i - 1;
-    const prevInst = registerUsage[j];
-
-    // Skip if previous instruction doesn't write to any register
+    const prevInst = regUsage[j];
     if (prevInst.rd === 0) continue;
 
-    // Check for RAW hazards
     let hasRawHazard = false;
     let hazardRegister = "";
 
@@ -190,346 +192,348 @@ const detectHazards = (
       hazardRegister = `rs($${currentInst.rs})`;
     } else if (
       (currentInst.rt === prevInst.rd && currentInst.type !== "I") ||
-      (currentInst.type === "I" && !currentInst.isLoad)
+      (currentInst.type === "I" && !currentInst.isLoad && currentInst.opcode !== 40 && currentInst.opcode !== 41 && currentInst.opcode !== 43)
     ) {
-      // For I-type instructions, rt might be a source (like in store instructions)
-      // or destination (like in load instructions)
       hasRawHazard = true;
       hazardRegister = `rt($${currentInst.rt})`;
     }
 
     if (hasRawHazard) {
       if (prevInst.isLoad) {
-        // Load-use hazard: Always needs 1 stall, then can forward from MEM
         hazards[i] = {
           type: "RAW",
           description: `Load-use hazard: ${hazardRegister} depends on lw in instruction ${j}`,
-          canForward: forwardingEnabled,
+          canForward: isForwardingAllowed,
           stallCycles: 1,
         };
         stalls[i] = 1;
-
-        if (forwardingEnabled) {
-          forwardings[i] = [
-            {
-              from: j,
-              to: i,
-              fromStage: "MEM", // Forward from MEM/WB to EX
-              toStage: "EX",
-              register: `$${prevInst.rd}`,
-            },
-          ];
+        if (isForwardingAllowed) {
+          forwardings[i] = [{
+            from: j, to: i, fromStage: "MEM", toStage: "EX", register: `$${prevInst.rd}`,
+          }];
         }
       } else {
-        // Regular RAW hazard
-        if (forwardingEnabled) {
-          // Can forward from EX/MEM to EX, no stall needed
+        if (isForwardingAllowed) {
           hazards[i] = {
             type: "RAW",
             description: `RAW hazard: ${hazardRegister} depends on instruction ${j} (forwarded)`,
-            canForward: true,
-            stallCycles: 0,
+            canForward: true, stallCycles: 0,
           };
-          forwardings[i] = [
-            {
-              from: j,
-              to: i,
-              fromStage: "EX", // Forward from EX/MEM to EX
-              toStage: "EX",
-              register: `$${prevInst.rd}`,
-            },
-          ];
+          forwardings[i] = [{
+            from: j, to: i, fromStage: "EX", toStage: "EX", register: `$${prevInst.rd}`,
+          }];
         } else {
-          // No forwarding: need 2 stalls for complete bubble
           hazards[i] = {
             type: "RAW",
             description: `RAW hazard: ${hazardRegister} depends on instruction ${j} (no forwarding)`,
-            canForward: false,
-            stallCycles: 2,
+            canForward: false, stallCycles: 2,
           };
           stalls[i] = 2;
         }
       }
     }
 
-    // Check for WAW hazards (only for instructions that write to the same register)
-    if (
-      currentInst.rd !== 0 &&
-      currentInst.rd === prevInst.rd &&
-      !hasRawHazard
-    ) {
+    if (currentInst.rd !== 0 && currentInst.rd === prevInst.rd && !hasRawHazard) {
       hazards[i] = {
         type: "WAW",
         description: `WAW hazard: Both instructions write to $${currentInst.rd}`,
-        canForward: true,
-        stallCycles: 0,
+        canForward: true, stallCycles: 0,
       };
     }
   }
-
   return [hazards, forwardings, stalls];
 };
 
-const calculatePrecedingStalls = (
-  stalls: Record<number, number>,
-  index: number
+const calculateStallsBeforeIndex = (
+  stallsRecord: Record<number, number>,
+  instructionIndex: number
 ): number => {
   let totalStalls = 0;
-  for (let i = 0; i < index; i++) {
-    totalStalls += stalls[i] || 0;
+  for (let k = 0; k < instructionIndex; k++) {
+    totalStalls += stallsRecord[k] || 0;
   }
   return totalStalls;
 };
 
-const calculateNextState = (currentState: SimulationState): SimulationState => {
+const computeNextSimulationState = (currentState: SimulationState): SimulationState => {
   if (!currentState.isRunning || currentState.isFinished) {
     return currentState;
   }
 
-  const nextCycle = currentState.currentCycle + 1;
-  const newInstructionStages: Record<number, number | null> = {};
-  let activeInstructions = 0;
+  let nextCycleVal = currentState.currentCycle + 1;
+  const nextInstructionStages: Record<number, number | null> = {};
+  let numberOfActiveInstructions = 0;
 
-  let newStallCycles = currentState.currentStallCycles;
-  if (newStallCycles > 0) {
-    newStallCycles--;
+  let pendingStallDuration = currentState.currentStallCycles;
+  if (pendingStallDuration > 0) {
+    pendingStallDuration--;
     return {
       ...currentState,
-      currentCycle: nextCycle,
+      currentCycle: nextCycleVal,
       instructionStages: currentState.instructionStages,
-      currentStallCycles: newStallCycles,
+      currentStallCycles: pendingStallDuration,
     };
   }
 
-  let totalStallCycles = 0;
-  Object.values(currentState.stalls).forEach((stalls) => {
-    totalStallCycles += stalls;
+  let cumulativeStallCycles = 0;
+  Object.values(currentState.stalls).forEach((stallCount) => {
+    cumulativeStallCycles += stallCount;
   });
 
   currentState.instructions.forEach((_, index) => {
-    const precedingStalls = calculatePrecedingStalls(
-      currentState.stalls,
-      index
-    );
-    const stageIndex = nextCycle - index - 1 - precedingStalls;
+    const stallsBeforeThis = calculateStallsBeforeIndex(currentState.stalls, index);
+    const stageIdx = nextCycleVal - index - 1 - stallsBeforeThis;
 
-    if (stageIndex >= 0 && stageIndex < currentState.stageCount) {
-      newInstructionStages[index] = stageIndex;
-      activeInstructions++;
-
-      if (
-        stageIndex === 1 &&
-        currentState.stalls[index] > 0 &&
-        newStallCycles === 0
-      ) {
-        newStallCycles = currentState.stalls[index];
+    if (stageIdx >= 0 && stageIdx < currentState.stageCount) {
+      nextInstructionStages[index] = stageIdx;
+      numberOfActiveInstructions++;
+      if (stageIdx === 1 && currentState.stalls[index] > 0 && pendingStallDuration === 0) {
+        pendingStallDuration = currentState.stalls[index];
       }
     } else {
-      newInstructionStages[index] = null;
+      nextInstructionStages[index] = null;
     }
   });
 
-  const completionCycle =
+  currentBranchTakenState = setomabranch;
+  branchLogicEntryCounter += 1;
+
+  console.log("Branch logic counter:", branchLogicEntryCounter);
+
+  if (branchLogicEntryCounter > 2) {
+    console.log("Processing potential branch effects");
+
+    if (haybranch && haybranch.length > 0) {
+      const firstQueuedOpcode = haybranch[0];
+      let branchEffectApplied = false;
+
+      if ((firstQueuedOpcode === "bne" || firstQueuedOpcode === "beq") && currentBranchTakenState) {
+        console.log(`Branch instruction (${firstQueuedOpcode}) confirmed taken.`);
+        misses++;
+        console.log("Updated misses count:", misses);
+        alarma = true;
+        console.log("Branch jump effect calculated for next cycle base:", nextCycleVal);
+        branchEffectApplied = true;
+      } else {
+        alarma = false; 
+      }
+
+     
+      pipelineChangePending = branchEffectApplied; 
+      pipelineChangePending = false;
+
+      haybranch.shift(); 
+      console.log("Remaining opcodes in haybranch queue:", haybranch);
+    } else {
+
+        alarma = false;
+        pipelineChangePending = false;
+    }
+    branchLogicEntryCounter = 0; 
+  }
+
+  currentBranchTakenState = false;
+
+  console.log("Cycle value after branch logic processing:", nextCycleVal); 
+
+
+  const simulationCompletionCycle = 
     currentState.instructions.length > 0
-      ? currentState.instructions.length +
-        currentState.stageCount -
-        1 +
-        totalStallCycles
+      ? currentState.instructions.length + currentState.stageCount - 1 + cumulativeStallCycles
       : 0;
 
-  const isFinished = nextCycle > completionCycle;
-  const isRunning = !isFinished;
+  const hasSimulationConcluded = nextCycleVal > simulationCompletionCycle; 
+  const isSimulationStillRunning = !hasSimulationConcluded; 
 
   return {
     ...currentState,
-    currentCycle: isFinished ? completionCycle : nextCycle,
-    instructionStages: newInstructionStages,
-    isRunning: isRunning,
-    isFinished: isFinished,
-    currentStallCycles: newStallCycles,
+    currentCycle: hasSimulationConcluded ? simulationCompletionCycle : nextCycleVal,
+    instructionStages: nextInstructionStages,
+    isRunning: isSimulationStillRunning,
+    isFinished: hasSimulationConcluded,
+    currentStallCycles: pendingStallDuration,
   };
 };
 
 export function SimulationProvider({ children }: PropsWithChildren) {
-  const [simulationState, setSimulationState] =
-    useState<SimulationState>(initialState);
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  const [simulationRunState, setSimulationRunState] = 
+    useState<SimulationState>(initialSimulationState);
+  const simulationIntervalRef = useRef<NodeJS.Timeout | null>(null); 
 
-  const clearTimer = () => {
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
+  const clearSimulationTimer = () => { 
+    if (simulationIntervalRef.current) {
+      clearInterval(simulationIntervalRef.current);
+      simulationIntervalRef.current = null;
     }
   };
 
-  const runClock = useCallback(() => {
-    clearTimer();
-    if (!simulationState.isRunning || simulationState.isFinished) return;
+  const executeSimulationClockTick = useCallback(() => { 
+    clearSimulationTimer();
+ 
+    if (!simulationRunState.isRunning || simulationRunState.isFinished) return;
 
-    intervalRef.current = setInterval(() => {
-      setSimulationState((prevState) => {
-        const nextState = calculateNextState(prevState);
-        if (nextState.isFinished && !prevState.isFinished) {
-          clearTimer();
+    simulationIntervalRef.current = setInterval(() => {
+      setSimulationRunState((previousState) => { 
+        const nextStateSnapshot = computeNextSimulationState(previousState); 
+        if (nextStateSnapshot.isFinished && !previousState.isFinished) {
+          clearSimulationTimer();
         }
-        return nextState;
+        return nextStateSnapshot;
       });
-    }, 1000);
-  }, [simulationState.isRunning, simulationState.isFinished]);
+    }, 1000); 
+  }, [simulationRunState.isRunning, simulationRunState.isFinished]); 
 
-  const resetSimulation = useCallback(() => {
-    clearTimer();
-    setSimulationState((prevState) => ({
-      ...initialState,
-      forwardingEnabled: prevState.forwardingEnabled,
-      stallsEnabled: prevState.stallsEnabled,
+  const performSimulationReset = useCallback(() => { 
+    clearSimulationTimer();
+    setSimulationRunState((previousState) => ({
+      ...initialSimulationState,
+      forwardingEnabled: previousState.forwardingEnabled,
+      stallsEnabled: previousState.stallsEnabled,
+      branchEnabled: previousState.branchEnabled, 
     }));
   }, []);
 
-  const startSimulation = useCallback(
+  const initializeAndStartSimulation = useCallback( 
     (submittedInstructions: string[]) => {
-      clearTimer(); // Clear previous timer just in case
+      clearSimulationTimer();
+     
+      misses = 0;
+
       if (submittedInstructions.length === 0) {
-        resetSimulation(); // Reset if no instructions submitted
+        performSimulationReset();
         return;
       }
 
-      // Parse instructions to extract register usage
-      const registerUsage: Record<number, RegisterUsage> = {};
+      const instructionDetails: Record<number, InstructionRegisterDetails> = {}; 
       submittedInstructions.forEach((inst, index) => {
-        registerUsage[index] = parseInstruction(inst);
+        instructionDetails[index] = parseHexInstructionToDetails(inst); 
       });
 
-      // Detect hazards and determine forwarding/stalls
-      const [hazards, forwardings, stalls] = detectHazards(
+      const [detectedHazards, activeForwardingPaths, determinedStalls] = analyzeHazardsAndForwarding( 
         submittedInstructions,
-        registerUsage,
-        simulationState.forwardingEnabled,
-        simulationState.stallsEnabled
+        instructionDetails,
+        simulationRunState.forwardingEnabled, 
+        simulationRunState.stallsEnabled    
       );
 
-      // Calculate total stall cycles
-      let totalStallCycles = 0;
-      Object.values(stalls).forEach((stall) => {
-        totalStallCycles += stall;
+      let totalStallDuration = 0; 
+      Object.values(determinedStalls).forEach((stall) => {
+        totalStallDuration += stall;
       });
 
-      const calculatedMaxCycles =
+      const calculatedMaxCyclesForRun = 
         submittedInstructions.length +
-        DEFAULT_STAGE_COUNT -
-        1 +
-        totalStallCycles;
-      const initialStages: Record<number, number | null> = {};
+        DEFAULT_PIPELINE_STAGE_COUNT - 1 +
+        totalStallDuration;
 
-      // Initialize stages for cycle 1
+      const initialCycleStages: Record<number, number | null> = {}; 
       submittedInstructions.forEach((_, index) => {
-        const stageIndex = 1 - index - 1; // Calculate stage for cycle 1
-        if (stageIndex >= 0 && stageIndex < DEFAULT_STAGE_COUNT) {
-          initialStages[index] = stageIndex;
+        const stageIdx = 1 - index - 1; // For cycle 1
+        if (stageIdx >= 0 && stageIdx < DEFAULT_PIPELINE_STAGE_COUNT) {
+          initialCycleStages[index] = stageIdx;
         } else {
-          initialStages[index] = null;
+          initialCycleStages[index] = null;
         }
       });
 
-      setSimulationState({
+      setSimulationRunState({
         instructions: submittedInstructions,
         currentCycle: 1,
-        maxCycles: calculatedMaxCycles,
+        maxCycles: calculatedMaxCyclesForRun,
         isRunning: true,
-        stageCount: DEFAULT_STAGE_COUNT,
-        instructionStages: initialStages,
+        stageCount: DEFAULT_PIPELINE_STAGE_COUNT,
+        instructionStages: initialCycleStages,
         isFinished: false,
-        registerUsage,
-        hazards,
-        forwardings,
-        stalls,
+        registerUsage: instructionDetails,
+        hazards: detectedHazards,
+        forwardings: activeForwardingPaths,
+        stalls: determinedStalls,
         currentStallCycles: 0,
-        forwardingEnabled: simulationState.forwardingEnabled,
-        stallsEnabled: simulationState.stallsEnabled,
+        forwardingEnabled: simulationRunState.forwardingEnabled, 
+        stallsEnabled: simulationRunState.stallsEnabled,       
       });
     },
-    [
-      resetSimulation,
-      simulationState.forwardingEnabled,
-      simulationState.stallsEnabled,
-    ]
+    [performSimulationReset, simulationRunState.forwardingEnabled, simulationRunState.stallsEnabled, simulationRunState.branchEnabled] // Added branchEnabled to deps
   );
 
-  const pauseSimulation = () => {
-    setSimulationState((prevState) => {
-      if (prevState.isRunning) {
-        clearTimer();
-        return { ...prevState, isRunning: false };
+  const triggerPauseSimulation = () => { 
+    setSimulationRunState((previousState) => {
+      if (previousState.isRunning) {
+        clearSimulationTimer();
+        return { ...previousState, isRunning: false };
       }
-      return prevState;
+      return previousState;
     });
   };
 
-  const resumeSimulation = () => {
-    setSimulationState((prevState) => {
-      if (
-        !prevState.isRunning &&
-        prevState.currentCycle > 0 &&
-        !prevState.isFinished
-      ) {
-        return { ...prevState, isRunning: true };
+  const triggerResumeSimulation = () => {
+    setSimulationRunState((previousState) => {
+      if (!previousState.isRunning && previousState.currentCycle > 0 && !previousState.isFinished) {
+        return { ...previousState, isRunning: true };
       }
-      return prevState;
+      return previousState;
     });
   };
 
-  const setForwardingEnabled = (enabled: boolean) => {
-    setSimulationState((prevState) => {
-      return { ...prevState, forwardingEnabled: enabled };
+  const toggleForwardingOption = (enabled: boolean) => { 
+    setSimulationRunState((previousState) => {
+      return { ...previousState, forwardingEnabled: enabled };
     });
   };
 
-  const setStallsEnabled = (enabled: boolean) => {
-    setSimulationState((prevState) => {
-      return { ...prevState, stallsEnabled: enabled };
+  const toggleStallDetectionOption = (enabled: boolean) => { 
+    setSimulationRunState((previousState) => {
+      
+      return { ...previousState, stallsEnabled: enabled };
     });
   };
+
+ 
+  const toggleBranchPredictionLogic = (enabled: boolean) => { 
+    setSimulationRunState((previousState) => {
+      return { ...previousState, branchEnabled: enabled }; 
+    });
+  };
+ 
 
   useEffect(() => {
-    if (simulationState.isRunning && !simulationState.isFinished) {
-      runClock();
+    if (simulationRunState.isRunning && !simulationRunState.isFinished) {
+      executeSimulationClockTick();
     } else {
-      clearTimer();
+      clearSimulationTimer();
     }
-    return clearTimer;
-  }, [simulationState.isRunning, simulationState.isFinished, runClock]);
+    return clearSimulationTimer;
+  }, [simulationRunState.isRunning, simulationRunState.isFinished, executeSimulationClockTick]);
 
-  // State value derived directly from simulationState
-  const stateValue: SimulationState = simulationState;
+  const memoizedStateValue: SimulationState = simulationRunState; 
 
-  const actionsValue: SimulationActions = useMemo(
+  const memoizedActionsValue: SimulationActions = useMemo( 
     () => ({
-      startSimulation,
-      resetSimulation,
-      pauseSimulation,
-      resumeSimulation,
-      setForwardingEnabled,
-      setStallsEnabled,
+      startSimulation: initializeAndStartSimulation,
+      resetSimulation: performSimulationReset,
+      pauseSimulation: triggerPauseSimulation,
+      resumeSimulation: triggerResumeSimulation,
+      setForwardingEnabled: toggleForwardingOption,
+      setStallsEnabled: toggleStallDetectionOption,
+      setBranchEnabled: toggleBranchPredictionLogic, 
     }),
-    [startSimulation, resetSimulation]
+  
+    [initializeAndStartSimulation, performSimulationReset, triggerPauseSimulation, triggerResumeSimulation, toggleForwardingOption, toggleStallDetectionOption, toggleBranchPredictionLogic]
   );
 
   return (
-    <SimulationStateContext.Provider value={stateValue}>
-      <SimulationActionsContext.Provider value={actionsValue}>
+    <SimulationStateContext.Provider value={memoizedStateValue}>
+      <SimulationActionsContext.Provider value={memoizedActionsValue}>
         {children}
       </SimulationActionsContext.Provider>
     </SimulationStateContext.Provider>
   );
 }
 
-// Custom hooks for easy context consumption
 export function useSimulationState() {
   const context = useContext(SimulationStateContext);
   if (context === undefined) {
-    throw new Error(
-      "useSimulationState must be used within a SimulationProvider"
-    );
+    throw new Error("useSimulationState must be used within a SimulationProvider");
   }
   return context;
 }
@@ -537,9 +541,7 @@ export function useSimulationState() {
 export function useSimulationActions() {
   const context = useContext(SimulationActionsContext);
   if (context === undefined) {
-    throw new Error(
-      "useSimulationActions must be used within a SimulationProvider"
-    );
+    throw new Error("useSimulationActions must be used within a SimulationProvider");
   }
   return context;
 }

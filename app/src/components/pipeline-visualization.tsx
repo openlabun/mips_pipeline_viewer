@@ -1,5 +1,8 @@
 'use client';
 
+
+import { alarma } from '@/context/SimulationContext';
+import { saltables } from './instruction-input'; 
 import type * as React from 'react';
 import {
   Table,
@@ -19,152 +22,168 @@ import {
   CheckSquare,
   AlertTriangle,
   Zap,
+  X,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useSimulationState } from '@/context/SimulationContext';
 import { Badge } from '@/components/ui/badge';
+import { misses } from '@/context/SimulationContext';
+import { botonn } from '@/context/SimulationContext';
 
-const STAGES = [
-  { name: 'IF', icon: Download },
-  { name: 'ID', icon: Code2 },
-  { name: 'EX', icon: Cpu },
-  { name: 'MEM', icon: MemoryStick },
-  { name: 'WB', icon: CheckSquare },
+
+const PIPELINE_STAGE_CONFIG = [
+  { id: 'IF', icon: Download, label: 'IF' },
+  { id: 'ID', icon: Code2, label: 'ID' },
+  { id: 'EX', icon: Cpu, label: 'EX' },
+  { id: 'MEM', icon: MemoryStick, label: 'MEM' },
+  { id: 'WB', icon: CheckSquare, label: 'WB' },
 ] as const;
 
+type PipelineStageId = typeof PIPELINE_STAGE_CONFIG[number]['id'];
+
+interface CellDisplayInfo {
+  type: 'stall' | 'forwarding' | 'normal' | 'empty';
+  stage: typeof PIPELINE_STAGE_CONFIG[number] | null;
+  isCurrentlyActiveCycleCell: boolean;
+  forwardingDetails?: any; 
+}
+
+
 export function PipelineVisualization() {
-  // Get state from context
+
   const {
-    instructions,
-    currentCycle: cycle,
-    maxCycles, // Max cycles determines the number of columns
-    isRunning,
-    instructionStages, // Use the pre-calculated stages
-    isFinished, // Use the finished flag from context
-    hazards,
-    forwardings,
-    stalls,
-    registerUsage,
-    currentStallCycles,
-    stallsEnabled,
-    forwardingEnabled,
+    instructions: instructionList, 
+    currentCycle: activeSimCycle,  
+    maxCycles: totalSimulationCycles, 
+    isRunning: simulationIsRunning, 
+    instructionStages: instructionStageTracker, 
+    isFinished: simulationIsConcluded,
+    hazards: hazardDetails, 
+    forwardings: forwardingDetailsFromContext, 
+    stalls: stallDataFromContext, 
+    registerUsage: instructionRegisterInfo, 
+  
+    stallsEnabled: stallLogicIsEnabled, 
+    forwardingEnabled: forwardingLogicIsEnabled, 
   } = useSimulationState();
 
-  // Use maxCycles for the number of columns if it's calculated, otherwise 0
-  const totalCyclesToDisplay = maxCycles > 0 ? maxCycles : 0;
-  const cycleNumbers = Array.from(
-    { length: totalCyclesToDisplay },
+  const displayedCycleCount = totalSimulationCycles > 0 ? totalSimulationCycles : 0;
+  const cycleIterationNumbers = Array.from(
+    { length: displayedCycleCount },
     (_, i) => i + 1
   );
 
-  // Calculate stalls before an instruction
-  const calculatePrecedingStalls = (index: number): number => {
-    if (!stallsEnabled) return 0;
-    let totalStalls = 0;
-    for (let i = 0; i < index; i++) {
-      totalStalls += stalls[i] || 0;
+  
+  const sumStallsBeforeInstruction = (instrIdx: number): number => {
+    if (!stallLogicIsEnabled) return 0;
+    let cumulativeStalls = 0;
+    for (let i = 0; i < instrIdx; i++) {
+      cumulativeStalls += stallDataFromContext[i] || 0;
     }
-    return totalStalls;
+    return cumulativeStalls;
   };
 
-  // Determine if a cell represents a stall
-  const isStallCell = (instIndex: number, cycleNum: number): boolean => {
-    if (!stallsEnabled || stalls[instIndex] <= 0) return false;
-    const expectedCycleWithoutStalls = instIndex + 2;
-    const precedingStalls = calculatePrecedingStalls(instIndex);
+  const isCellIndicatingStall = (instrIdx: number, cycleValue: number): boolean => {
+    if (!stallLogicIsEnabled || !stallDataFromContext[instrIdx] || stallDataFromContext[instrIdx] <= 0) return false;
+    
+    
+    const expectedCycleForIDWithoutStalls = instrIdx + 2; 
+    const precedingStalls = sumStallsBeforeInstruction(instrIdx);
+    const currentInstructionStalls = stallDataFromContext[instrIdx];
 
     return (
-      cycleNum > expectedCycleWithoutStalls + precedingStalls &&
-      cycleNum <=
-        expectedCycleWithoutStalls + precedingStalls + stalls[instIndex]
+      cycleValue > expectedCycleForIDWithoutStalls + precedingStalls &&
+      cycleValue <= expectedCycleForIDWithoutStalls + precedingStalls + currentInstructionStalls
     );
   };
 
-  // Determine if this cell shows forwarding
-  const getForwardingInfo = (instIndex: number, cycleNum: number) => {
+  const getForwardingDetailsForCell = (instrIdx: number, cycleValue: number) => {
     if (
-      !stallsEnabled ||
-      !forwardingEnabled ||
-      !forwardings[instIndex] ||
-      forwardings[instIndex].length === 0
+      !stallLogicIsEnabled ||
+      !forwardingLogicIsEnabled ||
+      !forwardingDetailsFromContext[instrIdx] ||
+      forwardingDetailsFromContext[instrIdx].length === 0
     ) {
-      return { isForwarding: false };
+      return { hasForwarding: false, details: undefined };
     }
 
-    const precedingStalls = calculatePrecedingStalls(instIndex);
-    const expectedStage = cycleNum - instIndex - 1 - precedingStalls;
+    const precedingStalls = sumStallsBeforeInstruction(instrIdx);
+    
+    const effectiveStageIndex = cycleValue - instrIdx - 1 - precedingStalls;
 
-    // Show forwarding in the EX stage (stage 2)
-    if (expectedStage === 2) {
+   
+    if (effectiveStageIndex === 2) {
       return {
-        isForwarding: true,
-        forwardingInfo: forwardings[instIndex],
+        hasForwarding: true,
+        details: forwardingDetailsFromContext[instrIdx],
       };
     }
-
-    return { isForwarding: false };
+    return { hasForwarding: false, details: undefined };
   };
 
-  // Check if a cell is in the current active column
-  const isInCurrentColumn = (cycleNum: number): boolean => {
-    return cycleNum === cycle;
+  const isCycleColumnActive = (cycleValue: number): boolean => {
+    return cycleValue === activeSimCycle;
   };
+  
+  const determineCellState = (instrIdx: number, cycleValue: number): CellDisplayInfo => {
+    const precedingStalls = sumStallsBeforeInstruction(instrIdx);
 
-  // Determine current stage and cell state
-  const getCellState = (instIndex: number, cycleNum: number) => {
-    const precedingStalls = calculatePrecedingStalls(instIndex);
-
-    if (stallsEnabled && isStallCell(instIndex, cycleNum)) {
+    if (stallLogicIsEnabled && isCellIndicatingStall(instrIdx, cycleValue)) {
       return {
         type: 'stall',
         stage: null,
-        isCurrentCell: isInCurrentColumn(cycleNum),
+        isCurrentlyActiveCycleCell: isCycleColumnActive(cycleValue),
       };
     }
 
-    const expectedStageIndex = cycleNum - instIndex - 1 - precedingStalls;
-    const currentStageIndex = instructionStages[instIndex];
+    
+    const stageIndexInPipeline = cycleValue - instrIdx - 1 - precedingStalls;
+    const currentActualStageIndexForInstruction = instructionStageTracker[instrIdx];
 
-    const isInPipeline =
-      expectedStageIndex >= 0 && expectedStageIndex < STAGES.length;
-    const stageData = isInPipeline ? STAGES[expectedStageIndex] : null;
+    const isStageValid = stageIndexInPipeline >= 0 && stageIndexInPipeline < PIPELINE_STAGE_CONFIG.length;
+    const stageConfigForCell = isStageValid ? PIPELINE_STAGE_CONFIG[stageIndexInPipeline] : null;
 
-    const { isForwarding, forwardingInfo } = getForwardingInfo(
-      instIndex,
-      cycleNum
-    );
+    const { hasForwarding, details: forwardingData } = getForwardingDetailsForCell(instrIdx, cycleValue);
 
-    const isCurrentCell =
-      currentStageIndex !== null &&
-      expectedStageIndex === currentStageIndex &&
-      cycleNum === cycle;
+    
+    const isCellRepresentingCurrentProgress =
+      currentActualStageIndexForInstruction !== null &&
+      stageIndexInPipeline === currentActualStageIndexForInstruction &&
+      cycleValue === activeSimCycle;
 
-    if (isForwarding) {
+    const isBranchRowActive =
+                    alarma === true &&
+                    saltables[instrIdx] &&
+                    botonn === true;
+
+    if (hasForwarding) {
       return {
         type: 'forwarding',
-        stage: stageData,
-        isCurrentCell: isCurrentCell || isInCurrentColumn(cycleNum),
-        forwardingInfo,
+        stage: stageConfigForCell,
+        isCurrentlyActiveCycleCell: isCellRepresentingCurrentProgress || isCycleColumnActive(cycleValue),
+        forwardingDetails: forwardingData,
       };
     }
 
     return {
-      type: isInPipeline ? 'normal' : 'empty',
-      stage: stageData,
-      isCurrentCell: isCurrentCell || isInCurrentColumn(cycleNum),
+      type: isStageValid ? 'normal' : 'empty',
+      stage: stageConfigForCell,
+      isCurrentlyActiveCycleCell: isCellRepresentingCurrentProgress || isCycleColumnActive(cycleValue),
     };
   };
+
 
   return (
     <Card className='w-full overflow-hidden'>
       <CardHeader>
         <CardTitle>
           Pipeline Progress
-          {!stallsEnabled && (
+          {!stallLogicIsEnabled && (
             <span className='ml-2 text-sm font-normal text-muted-foreground'>
               (Ideal Pipeline - No Hazard Detection)
             </span>
           )}
+          
         </CardTitle>
       </CardHeader>
       <CardContent>
@@ -172,184 +191,203 @@ export function PipelineVisualization() {
           <Table className='min-w-max'>
             <TableCaption>
               MIPS instruction pipeline visualization
-              {!stallsEnabled && ' - ideal 5-stage pipeline'}
+              {!stallLogicIsEnabled && ' - ideal 5-stage pipeline'}
             </TableCaption>
             <TableHeader>
               <TableRow>
-                <TableHead className='w-[120px] sticky bg-card z-10 border-r'>
+                <TableHead className='w-[120px] sticky left-0 bg-card z-10 border-r'>
                   Instruction
                 </TableHead>
-                <TableHead className='w-[240px] sticky bg-card z-10 border-r'>
-                  {stallsEnabled ? 'Hazard & Forwarding' : 'Instruction Type'}
+                <TableHead className='w-[240px] sticky left-[120px] bg-card z-10 border-r'>
+                  {stallLogicIsEnabled ? 'Hazard & Forwarding Info' : 'Instruction Type'}
                 </TableHead>
-                {cycleNumbers.map((c) => (
-                  <TableHead key={`cycle-${c}`} className='text-center w-16'>
-                    {c}
+                {cycleIterationNumbers.map((cycleNum) => (
+                  <TableHead key={`cycle-header-${cycleNum}`} className='text-center w-16'>
+                    {cycleNum}
                   </TableHead>
                 ))}
               </TableRow>
             </TableHeader>
             <TableBody>
-              {instructions.map((inst, instIndex) => (
-                <TableRow key={`inst-${instIndex}`} className='h-24'>
-                  <TableCell className='font-mono sticky left-0 bg-card z-10 border-r'>
-                    {inst}
-                    {registerUsage[instIndex] && (
-                      <div className='text-xs text-muted-foreground mt-1'>
-                        {registerUsage[instIndex].type}-type
-                        {registerUsage[instIndex].isLoad && ' (Load)'}: rs=$
-                        {registerUsage[instIndex].rs}, rt=$
-                        {registerUsage[instIndex].rt}
-                        {registerUsage[instIndex].rd !== 0 &&
-                          `, rd=$${registerUsage[instIndex].rd}`}
-                      </div>
-                    )}
-                  </TableCell>
+              
+              {instructionList.map((instructionHex, instrIdx) => {
+                const currentInstructionHazards = hazardDetails[instrIdx];
+                const currentInstructionStalls = stallDataFromContext[instrIdx];
+                const currentForwardingInfo = forwardingDetailsFromContext[instrIdx];
+                const registerUsageInfo = instructionRegisterInfo[instrIdx];
 
-                  {/* Hazard information or instruction type */}
-                  <TableCell className='sticky left-[120px] bg-card z-10 border-r'>
-                    {stallsEnabled
-                      ? // Show hazard info when stalls are enabled
-                        hazards[instIndex]?.type !== 'NONE' && (
+                return (
+                  <TableRow key={`instr-row-${instrIdx}`} className='h-24'>
+                    <TableCell className='font-mono sticky left-0 bg-card z-10 border-r'>
+                      {instructionHex}
+                      {registerUsageInfo && (
+                        <div className='text-xs text-muted-foreground mt-1'>
+                          {registerUsageInfo.type}-type
+                          {registerUsageInfo.isLoad && ' (Load)'}: rs=${registerUsageInfo.rs}, rt=${registerUsageInfo.rt}
+                          {registerUsageInfo.rd !== 0 && `, rd=$${registerUsageInfo.rd}`}
+                        </div>
+                      )}
+                    </TableCell>
+
+                    <TableCell className='sticky left-[120px] bg-card z-10 border-r'>
+                      {stallLogicIsEnabled ? (
+                        currentInstructionHazards?.type !== 'NONE' && (
                           <div className='flex flex-col gap-1 items-start'>
                             <div className='flex items-start gap-1'>
                               <Badge
                                 className={cn(
-                                  hazards[instIndex].type === 'RAW'
+                                  currentInstructionHazards.type === 'RAW'
                                     ? 'border-red-500 bg-red-100 text-red-500'
                                     : 'border-yellow-500 bg-yellow-100 text-yellow-500',
                                   'px-2 border-[1px] rounded-lg'
                                 )}
                               >
-                                {hazards[instIndex].type}
+                                {currentInstructionHazards.type}
                               </Badge>
-                              {hazards[instIndex].canForward &&
-                                forwardings[instIndex]?.length > 0 && (
-                                  <Badge className='border px-2 bg-green-100 text-green-500 border-green-500 rounded-lg'>
-                                    FORWARDING
-                                  </Badge>
-                                )}
-                              {stalls[instIndex] > 0 && (
+                              {currentInstructionHazards.canForward && currentForwardingInfo?.length > 0 && (
+                                <Badge className='border px-2 bg-green-100 text-green-500 border-green-500 rounded-lg'>
+                                  FORWARDING
+                                </Badge>
+                              )}
+                              {currentInstructionStalls > 0 && (
                                 <Badge className='border px-2 bg-red-100 text-red-500 border-red-500 rounded-lg'>
-                                  STALL ({stalls[instIndex]})
+                                  STALL ({currentInstructionStalls})
                                 </Badge>
                               )}
                             </div>
-
-                            {hazards[instIndex].canForward &&
-                              forwardings[instIndex]?.length > 0 && (
-                                <div className='flex items-center gap-1'>
-                                  {forwardings[instIndex].map((fw, idx) => (
-                                    <span
-                                      key={idx}
-                                      className='text-xs border px-2 bg-black/1 text-black border-black/50 rounded-lg'
-                                    >
-                                      {fw.fromStage} {fw.register} →{' '}
-                                      {fw.toStage}
-                                    </span>
-                                  ))}
-                                </div>
-                              )}
+                            {currentInstructionHazards.canForward && currentForwardingInfo?.length > 0 && (
+                              <div className='flex items-center gap-1 flex-wrap'> 
+                                {currentForwardingInfo.map((fwDetail, fwIdx) => (
+                                  <span
+                                    key={`fw-${instrIdx}-${fwIdx}`}
+                                    className='text-xs border px-2 bg-black/1 text-black border-black/50 rounded-lg'
+                                  >
+                                    {fwDetail.fromStage} {fwDetail.register} → {fwDetail.toStage}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
                           </div>
                         )
-                      : // Show instruction type when stalls are disabled
-                        registerUsage[instIndex] && (
+                      ) : (
+                        registerUsageInfo && (
                           <div className='flex flex-col gap-1'>
                             <Badge className='w-fit px-2 border-[1px] bg-blue-100 text-blue-500 border-blue-500 rounded-lg'>
-                              {registerUsage[instIndex].type}-TYPE
+                              {registerUsageInfo.type}-TYPE
                             </Badge>
-                            {registerUsage[instIndex].isLoad && (
+                            {registerUsageInfo.isLoad && (
                               <Badge className='w-fit px-2 border-[1px] bg-purple-100 text-purple-500 border-purple-500 rounded-lg'>
                                 LOAD
                               </Badge>
                             )}
                           </div>
-                        )}
-                  </TableCell>
+                        )
+                      )}
+                    </TableCell>
 
-                  {cycleNumbers.map((c) => {
-                    const cellState = getCellState(instIndex, c);
+                    {cycleIterationNumbers.map((cycleVal) => {
+                      const cellDisplay = determineCellState(instrIdx, cycleVal);
+                      const isColActive = cycleVal === activeSimCycle;
+                      const cellHasPipelineContent = cellDisplay.type !== 'empty';
 
-                    const isActiveColumn = c === cycle;
-                    const hasContent = cellState.type !== 'empty';
+                      const baseCellStyle =
+                        cellDisplay.type === 'stall'
+                          ? 'bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400'
+                          : cellDisplay.type === 'forwarding'
+                          ? 'bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400'
+                          : cellDisplay.type === 'normal'
+                          ? 'bg-secondary text-secondary-foreground'
+                          : 'bg-background'; 
 
-                    const cellStyle =
-                      cellState.type === 'stall'
-                        ? 'bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400'
-                        : cellState.type === 'forwarding'
-                        ? 'bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400'
-                        : cellState.type === 'normal'
-                        ? 'bg-secondary text-secondary-foreground'
-                        : 'bg-background';
+                      const activeColumnHighlightStyle =
+                        isColActive && cellHasPipelineContent
+                          ? cellDisplay.type === 'stall'
+                            ? 'bg-red-200 dark:bg-red-800/50' 
+                            : cellDisplay.type === 'forwarding'
+                            ? 'bg-green-200 dark:bg-green-800/50' 
+                            : 'bg-accent text-accent-foreground'
+                          : '';
+                      
+                      const animationStyle =
+                        isColActive && cellHasPipelineContent && simulationIsRunning && !simulationIsConcluded
+                          ? cellDisplay.type === 'stall'
+                            ? 'animate-pulse-bg-red'
+                            : cellDisplay.type === 'forwarding'
+                            ? 'animate-pulse-bg-green'
+                            : 'animate-pulse-bg'
+                          : '';
 
-                    const animationClass =
-                      isActiveColumn && hasContent && isRunning && !isFinished
-                        ? cellState.type === 'stall'
-                          ? 'animate-pulse-bg-red'
-                          : cellState.type === 'forwarding'
-                          ? 'animate-pulse-bg-green'
-                          : 'animate-pulse-bg'
-                        : '';
+                      
+                      const branchSkipStyleOverride =
+                        alarma === true &&
+                        saltables[instrIdx] && 
+                        cellDisplay.stage &&
+                        (PIPELINE_STAGE_CONFIG as ReadonlyArray<{label: string}>).map(s => s.label).includes(cellDisplay.stage.label as PipelineStageId) && // Ensure type compatibility
+                        botonn === true && 
+                        'bg-purple-300 text-black border border-purple-500';
 
-                    const highlightClass =
-                      isActiveColumn && hasContent
-                        ? cellState.type === 'stall'
-                          ? 'bg-red-200 dark:bg-red-800/50'
-                          : cellState.type === 'forwarding'
-                          ? 'bg-green-200 dark:bg-green-800/50'
-                          : 'bg-accent text-accent-foreground'
-                        : '';
-
-                    return (
-                      <TableCell
-                        key={`inst-${instIndex}-cycle-${c}`}
-                        className={cn(
-                          'text-center w-16 h-14 transition-colors duration-300',
-                          cellStyle,
-                          isActiveColumn ? highlightClass : '',
-                          animationClass
-                        )}
-                      >
-                        {/* Stall indicator */}
-                        {cellState.type === 'stall' && (
-                          <div className='flex flex-col items-center justify-center'>
-                            <AlertTriangle className='w-4 h-4 mb-1 text-red-500' />
-                            <span className='text-xs font-semibold'>STALL</span>
-                          </div>
-                        )}
-
-                        {/* Normal stage indicator */}
-                        {cellState.type === 'normal' && cellState.stage && (
-                          <div className='flex flex-col items-center justify-center'>
-                            <cellState.stage.icon className='w-4 h-4 mb-1' />
-                            <span className='text-xs'>
-                              {cellState.stage.name}
-                            </span>
-                          </div>
-                        )}
-
-                        {/* Forwarding indicator */}
-                        {cellState.type === 'forwarding' && cellState.stage && (
-                          <div className='flex flex-col items-center justify-center'>
-                            <div className='flex items-center justify-center mb-1 gap-1'>
-                              <cellState.stage.icon className='w-4 h-4' />
-                              <Zap className='w-3 h-3 text-green-500' />
+                      return (
+                        <TableCell
+                          key={`instr-${instrIdx}-cycle-${cycleVal}`}
+                          className={cn(
+                            'text-center w-16 h-14 p-0 transition-colors duration-300',
+                            baseCellStyle, 
+                            activeColumnHighlightStyle, 
+                            animationStyle, 
+                            branchSkipStyleOverride 
+                          )}
+                        >
+                          {cellDisplay.type === 'stall' && (
+                            <div className='flex flex-col items-center justify-center'>
+                              <AlertTriangle className='w-4 h-4 mb-1 text-red-500' />
+                              <span className='text-xs font-semibold'>STALL</span>
                             </div>
-                            <span className='text-xs'>
-                              {cellState.stage.name}
-                            </span>
-                          </div>
-                        )}
-                      </TableCell>
-                    );
-                  })}
-                </TableRow>
-              ))}
+                          )}
+                          {cellDisplay.type === 'normal' && cellDisplay.stage && (
+                            <div className='flex flex-col items-center justify-center'>
+                              {branchSkipStyleOverride ? (
+                                <X className='w-4 h-4 mb-1 text-red-500' /> 
+                              ) : (
+                                <cellDisplay.stage.icon className='w-4 h-4 mb-1' /> 
+                              )}
+                              <span className='text-xs'>{cellDisplay.stage.label}</span>
+                            </div>
+                          )}
+                          
+                          {cellDisplay.type === 'forwarding' && cellDisplay.stage && (
+                            <div className='flex flex-col items-center justify-center'>
+                              <div className='flex items-center justify-center mb-1 gap-1'>
+                                {branchSkipStyleOverride ? (
+                                  <X className='w-4 h-4 text-red-500' /> 
+                                ) : (
+                                  <cellDisplay.stage.icon className='w-4 h-4' />
+                                )}
+                                
+                                <Zap className='w-3 h-3 text-green-500' /> 
+                              </div>
+                              <span className='text-xs'>{cellDisplay.stage.label}</span>
+                            </div>
+                          )}
+                          
+                          {branchSkipStyleOverride && ( 
+                           <div>
+                              <span className="text-[10px] font-semibold leading-tight"></span>
+                            </div>
+                          )}
+                        </TableCell>
+                      );
+                    })}
+                  </TableRow>
+                );
+              })}
             </TableBody>
           </Table>
         </div>
 
-        {/* Legend */}
+        
+        <span className="ml-6 text-sm font-Arial text-purple-600">
+              Number of Branch misses: {misses}
+        </span>
         <div className='flex flex-wrap gap-4 mt-4 text-sm'>
           <div className='flex items-center'>
             <div className='w-4 h-4 bg-accent mr-2 rounded-sm'></div>
@@ -359,7 +397,7 @@ export function PipelineVisualization() {
             <div className='w-4 h-4 bg-secondary mr-2 rounded-sm'></div>
             <span>Completed Stage</span>
           </div>
-          {stallsEnabled && (
+          {stallLogicIsEnabled && (
             <>
               <div className='flex items-center'>
                 <div className='w-4 h-4 bg-red-100 dark:bg-red-900/30 mr-2 rounded-sm'></div>
@@ -371,6 +409,10 @@ export function PipelineVisualization() {
               </div>
             </>
           )}
+          <div className='flex items-center'>
+            <div className='w-4 h-4 bg-purple-100 dark:bg-purple-900/30 mr-2 rounded-sm'></div>
+            <span>Branch</span>
+          </div>
         </div>
       </CardContent>
     </Card>
