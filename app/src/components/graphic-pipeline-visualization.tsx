@@ -1,6 +1,8 @@
 'use client';
 import React from 'react';
 import { useSimulationState } from '@/context/SimulationContext';
+import Image from 'next/image';
+import datapath from '@/../public/datapath.jpg';
 
 type AreaComponent = { x: number; y: number; w: number; h: number; label: string };
 
@@ -392,11 +394,14 @@ export default function GraphicPipelineVisualization({
         className="relative w-full mx-auto"
         style={{ maxWidth: maxWidthPx }}
         >
-        <img
-            src={imageSrc}
-            alt="MIPS datapath"
-            className="w-full h-auto block select-none"
-            draggable={false}
+        <Image
+          src={imageSrc || datapath}          
+          alt="MIPS datapath"
+          className="w-full h-auto block select-none"
+          priority
+          draggable={false}
+          width={1200}
+          height={744} 
         />
         {showGuides &&
         GUIDE_COMPONENTS.map((a, i) => (

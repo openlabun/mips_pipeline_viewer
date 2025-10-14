@@ -56,7 +56,7 @@ export function PipelineStage({
   const Icon = registerIcon[stageName];
   const shortText = instruction && instruction !== '---' ? fmtHex(instruction) : '---';
   const longText = fullInstruction && fullInstruction !== 'empty' ? fmtHex(fullInstruction) : 'empty';
-  const tag = instructionIndex != null ? `[${instructionIndex + 1}] ` : '';
+  const tag = instructionIndex != null ? `[${instructionIndex}] ` : '';
 
   // Show rules bound to the *stage* of the instruction
   const showStall = stageName === 'ID/EX' && stallCount > 0;         // stalls are inserted in ID
@@ -185,7 +185,7 @@ export function PipelineStage({
               <ul className="list-disc pl-4 space-y-0.5">
                 {forwardings.map((f, i) => (
                   <li key={i}>
-                    from [{f.from + 1}] {f.fromStage} → to [{f.to + 1}] {f.toStage} ({f.register})
+                    from [{f.from}] {f.fromStage} → to [{f.to}] {f.toStage} ({f.register})
                   </li>
                 ))}
               </ul>

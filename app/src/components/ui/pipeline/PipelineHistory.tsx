@@ -23,11 +23,6 @@ const formatHex = (v: string | null) => {
   return '0x' + raw.toLowerCase();
 };
 
-const Chip = ({ className, children }: { className: string; children: React.ReactNode }) => (
-  <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium border ${className}`}>
-    {children}
-  </span>
-);
 
 export function PipelineHistory({
   history,
@@ -50,7 +45,7 @@ export function PipelineHistory({
           <ScrollArea className="h-64 rounded-md border bg-muted/20">
             <div className="p-2 space-y-1">
               {history[reg].map((entry, index) => {
-                const tag = entry.idx != null ? `[${entry.idx + 1}] ` : '';
+                const tag = entry.idx != null ? `[${entry.idx}] ` : '';
                 const hz = entry.idx != null ? hazards[entry.idx] : undefined;
                 const hasFwd = entry.idx != null ? (forwardings[entry.idx]?.length ?? 0) > 0 : false;
                 const stallCount = entry.idx != null ? (stalls[entry.idx] ?? 0) : 0;

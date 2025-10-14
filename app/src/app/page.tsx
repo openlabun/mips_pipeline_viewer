@@ -94,17 +94,6 @@ export default function Home() {
           </div>
         </header>
 
-        {viewMode === 'graphic' && (
-          <div className="w-full max-w-xl mx-auto">
-            <Alert className="border-amber-300 bg-amber-50/80 text-amber-900 text-sm">
-              <AlertTitle className="font-semibold">Graphic mode limitation</AlertTitle>
-              <AlertDescription>
-                The graphic visualization currently supports <b>LOAD</b> and <b>STORE</b> instructions only.
-              </AlertDescription>
-            </Alert>
-          </div>
-        )}
-
         {/* Pass context actions/state down */}
         <div className='w-full max-w-md'>
           <InstructionInput
@@ -135,6 +124,18 @@ export default function Home() {
         </div>
 
         <Separator className='my-8 w-full max-w-4xl bg-gradient-to-r from-transparent via-gray-300 to-transparent h-px' />
+
+        {viewMode === 'graphic' && (
+          <div className="w-full max-w-xl mx-auto">
+            <Alert className="border-amber-300 bg-amber-50/80 text-amber-900 text-sm">
+              <AlertTitle className="font-semibold">Graphic mode limitation</AlertTitle>
+              <AlertDescription>
+                The graphic visualization currently supports <b>LOAD</b> and <b>STORE</b> instructions only.
+              </AlertDescription>
+            </Alert>
+          </div>
+        )}
+
 
         {/* Conditionally render visualization and cycle info only if instructions exist */}
         {instructions.length > 0 && (
