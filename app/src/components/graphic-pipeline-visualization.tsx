@@ -400,6 +400,8 @@ export default function GraphicPipelineVisualization({
   showGuides = true,
   maxWidthPx = 1200,
 }: Props) {
+  const { instructions, instructionStages } = useSimulationState();
+
   return (
     <div
       className="relative w-full mx-auto"
@@ -432,6 +434,41 @@ export default function GraphicPipelineVisualization({
             </div>
           </div>
         ))}
+      {/* Instruction Legend Table */}
+      <div className="absolute top-4 right-4 bg-white/90 backdrop-blur-sm border rounded-lg shadow-lg p-3 z-[100] max-w-[250px]">
+        <h4 className="text-xs font-bold mb-2 border-b pb-1">Active Instructions</h4>
+        <div className="space-y-1.5 overflow-y-auto max-h-[300px]">
+          {instructions.map((inst, i) => {
+            const stage = instructionStages[i];
+            if (stage === null || stage === undefined || stage < 0 || stage > 4) return null;
+
+            const stageNames = ['IF', 'ID', 'EX', 'MEM', 'WB'];
+            const color = colorForIndex(i);
+            const pc = (i * 4).toString(16).padStart(4, '0');
+
+            return (
+              <div key={`legend-${i}`} className="flex items-center gap-2 text-[10px] animate-in fade-in slide-in-from-right-2">
+                <div
+                  className="w-3 h-3 rounded-full shrink-0 border border-black/10"
+                  style={{ backgroundColor: color }}
+                />
+                <div className="flex flex-col min-w-0">
+                  <div className="flex items-center gap-1">
+                    <span className="font-mono font-bold text-gray-500">0x{pc}</span>
+                    <span className="font-mono truncate">0x{inst}</span>
+                  </div>
+                  <div className="text-[9px] font-medium text-blue-600 bg-blue-50 px-1 rounded w-fit">
+                    Stage: {stageNames[stage]}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+          {Object.values(instructionStages).every(s => s === null || s === undefined) && (
+            <p className="text-[10px] text-gray-400 italic">No instructions in pipeline</p>
+          )}
+        </div>
+      </div>
       <IfOverlays allAreas={ALL_COMPONENTS} />
       <IdOverlays allAreas={ALL_COMPONENTS} />
       <EXLoadOverlays />

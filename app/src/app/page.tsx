@@ -23,7 +23,7 @@ import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
 type ViewMode = 'table' | 'classic' | 'graphic';
 
 // Default Instructions
-const DEFAULTS = 
+const DEFAULTS =
   [
     '0x02108025', // or
     '0x8e110000', // lw $s1,0($s0)
@@ -125,16 +125,7 @@ export default function Home() {
 
         <Separator className='my-8 w-full max-w-4xl bg-gradient-to-r from-transparent via-gray-300 to-transparent h-px' />
 
-        {viewMode === 'graphic' && (
-          <div className="w-full max-w-xl mx-auto">
-            <Alert className="border-amber-300 bg-amber-50/80 text-amber-900 text-sm">
-              <AlertTitle className="font-semibold">Graphic mode limitation</AlertTitle>
-              <AlertDescription>
-                The graphic visualization currently supports <b>LOAD</b> and <b>STORE</b> instructions only.
-              </AlertDescription>
-            </Alert>
-          </div>
-        )}
+
 
 
         {/* Conditionally render visualization and cycle info only if instructions exist */}
@@ -149,29 +140,27 @@ export default function Home() {
                     Cycle: {currentCycle} / {maxCycles}
                   </span>
                   <div
-                    className={`inline-flex items-center space-x-2 px-3 py-1 rounded-full text-sm font-medium font-montserrat ${
-                      isFinished
+                    className={`inline-flex items-center space-x-2 px-3 py-1 rounded-full text-sm font-medium font-montserrat ${isFinished
                         ? 'bg-green-100 text-green-700 border border-green-200'
                         : isRunning
-                        ? 'bg-blue-100 text-blue-700 border border-blue-200'
-                        : 'bg-yellow-100 text-yellow-700 border border-yellow-200'
-                    }`}
+                          ? 'bg-blue-100 text-blue-700 border border-blue-200'
+                          : 'bg-yellow-100 text-yellow-700 border border-yellow-200'
+                      }`}
                   >
                     <div
-                      className={`w-2 h-2 rounded-full ${
-                        isFinished
+                      className={`w-2 h-2 rounded-full ${isFinished
                           ? 'bg-green-500'
                           : isRunning
-                          ? 'bg-blue-500 animate-pulse'
-                          : 'bg-yellow-500'
-                      }`}
+                            ? 'bg-blue-500 animate-pulse'
+                            : 'bg-yellow-500'
+                        }`}
                     ></div>
                     <span>
                       {isFinished
                         ? 'Finished'
                         : isRunning
-                        ? 'Running'
-                        : 'Paused'}
+                          ? 'Running'
+                          : 'Paused'}
                     </span>
                   </div>
                 </div>

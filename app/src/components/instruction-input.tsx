@@ -176,25 +176,6 @@ export function InstructionInput({
   // Function to handle the change of forwarding
   const handleForwardingChange = (checked: boolean) => {
     setForwardingEnabled(checked);
-
-    // If the simulation has finished, restart it with the new configuration
-    if (hasStarted && isFinished) {
-      setTimeout(() => {
-        onReset();
-        window.dispatchEvent(new CustomEvent('pipeline:reset'));
-        setTimeout(() => {
-          const currentInstructions = inputText
-            .trim()
-            .split('\n')
-            .map((line) => line.trim())
-            .filter((line) => line.length > 0);
-
-          if (currentInstructions.length > 0) {
-            onInstructionsSubmit(currentInstructions);
-          }
-        }, 50);
-      }, 50);
-    }
   };
 
   // Function to handle the change of stalls
@@ -204,25 +185,6 @@ export function InstructionInput({
     // If stalls are disabled, also disable forwarding since it doesn't make sense
     if (!checked) {
       setForwardingEnabled(false);
-    }
-
-    // If the simulation has finished, restart it with the new configuration
-    if (hasStarted && isFinished) {
-      setTimeout(() => {
-        onReset();
-        window.dispatchEvent(new CustomEvent('pipeline:reset'));
-        setTimeout(() => {
-          const currentInstructions = inputText
-            .trim()
-            .split('\n')
-            .map((line) => line.trim())
-            .filter((line) => line.length > 0);
-
-          if (currentInstructions.length > 0) {
-            onInstructionsSubmit(currentInstructions);
-          }
-        }, 50);
-      }, 50);
     }
   };
 
