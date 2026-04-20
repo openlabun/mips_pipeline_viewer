@@ -1,7 +1,7 @@
 'use client';
 
 import type * as React from 'react';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
@@ -23,6 +23,7 @@ import {
   AlertTriangle,
   Zap,
   StopCircle,
+  Upload,
 } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
 
@@ -43,6 +44,7 @@ export function InstructionInput({
 }: InstructionInputProps) {
   const [inputText, setInputText] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Preset defualts for text area if not running
   useEffect(() => {
@@ -120,6 +122,49 @@ export function InstructionInput({
     onInstructionsSubmit(currentInstructions);
   };
 
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const content = e.target?.result as string;
+      if (!content) return;
+
+      // Logic to parse "v2.0 raw" or similar formats
+      // Format:
+      // v2.0 raw
+      // 25490001 01294820 ...
+
+      const lines = content.split('\n');
+      let instructions: string[] = [];
+
+      lines.forEach(line => {
+        const trimmed = line.trim();
+        // Skip header lines like "v2.0 raw"
+        if (trimmed.startsWith('v2.0') || trimmed === 'raw') return;
+
+        // Split by whitespace and collect hex instructions
+        const parts = trimmed.split(/\s+/).filter(part => part.length > 0);
+        instructions = [...instructions, ...parts];
+      });
+
+      if (instructions.length > 0) {
+        setInputText(instructions.join('\n'));
+        setError(null);
+      } else {
+        setError('No valid instructions found in the file.');
+      }
+
+      // Reset input value so same file can be uploaded again
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    };
+    reader.onerror = () => {
+      setError('Error reading file.');
+    };
+    reader.readAsText(file);
+  };
+
   const handlePauseResume = () => {
     if (isRunning) {
       pauseSimulation();
@@ -192,9 +237,32 @@ export function InstructionInput({
       </CardHeader>
       <CardContent className='space-y-4'>
         <div className='grid w-full gap-1.5'>
-          <Label htmlFor='instructions'>
-            Enter Hex Instructions (one per line)
-          </Label>
+          <div className='flex items-center justify-between'>
+            <Label htmlFor='instructions'>
+              Enter Hex Instructions (one per line)
+            </Label>
+            <div className='flex items-center gap-2'>
+              <input
+                type='file'
+                ref={fileInputRef}
+                className='hidden'
+                accept='.txt,.raw,.hex'
+                onChange={handleFileUpload}
+                disabled={disableInputAndStart}
+              />
+              <Button
+                variant='outline'
+                size='sm'
+                onClick={() => fileInputRef.current?.click()}
+                disabled={disableInputAndStart}
+                className='h-8 text-xs gap-1'
+                title='Load instructions from file'
+              >
+                <Upload className='w-3.5 h-3.5' />
+                Load File
+              </Button>
+            </div>
+          </div>
           <Textarea
             id='instructions'
             placeholder='e.g., 00a63820...' // Removed 0x prefix for consistency with regex
@@ -236,9 +304,8 @@ export function InstructionInput({
             />
             <Label
               htmlFor='forwarding-mode'
-              className={`text-sm ${
-                !stallsEnabled ? 'text-muted-foreground' : ''
-              }`}
+              className={`text-sm ${!stallsEnabled ? 'text-muted-foreground' : ''
+                }`}
             >
               Enable Data Forwarding
             </Label>
@@ -308,8 +375,8 @@ export function InstructionInput({
             {isFinished
               ? 'Finished'
               : hasStarted
-              ? 'Running...'
-              : 'Start Simulation'}
+                ? 'Running...'
+                : 'Start Simulation'}
           </Button>
 
           {/* Conditional Play/Pause Button: Show only when pause/resume is possible */}
