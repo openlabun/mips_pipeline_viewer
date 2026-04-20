@@ -7,69 +7,69 @@ import datapath from '@/../public/datapath.jpg';
 type AreaComponent = { x: number; y: number; w: number; h: number; label: string };
 
 const IF_COMPONENTS: AreaComponent[] = [
-    // MUX
-    { x: 6.2, y: 39, w: 2.3, h: 13, label: 'MUX' },
+  // MUX
+  { x: 6.2, y: 39, w: 2.3, h: 13, label: 'MUX' },
 
-    // PC
-    { x: 10, y: 40, w: 2.3, h: 12, label: 'PC' },
+  // PC
+  { x: 10, y: 40, w: 2.3, h: 12, label: 'PC' },
 
-    // Adder
-    { x: 19.5, y: 15, w: 4.55, h: 15, label: 'Add' },
+  // Adder
+  { x: 19.5, y: 15, w: 4.55, h: 15, label: 'Add' },
 
-    // Instruction Memory 
-    { x: 15.2, y: 44, w: 11.4, h: 25.5, label: 'IM' },
+  // Instruction Memory 
+  { x: 15.2, y: 44, w: 11.4, h: 25.5, label: 'IM' },
 
-    // IF/ID pipeline 
-    { x: 30.8, y: 11.3, w: 2.6, h: 83, label: 'IF/ID' },
-    ];
+  // IF/ID pipeline 
+  { x: 30.8, y: 11.3, w: 2.6, h: 83, label: 'IF/ID' },
+];
 
 
 const ID_COMPONENTS: AreaComponent[] = [
-    // Registers
-    { x: 37.5, y: 44,  w: 11.5,  h: 25, label: 'Registers' },
+  // Registers
+  { x: 37.5, y: 44, w: 11.5, h: 25, label: 'Registers' },
 
-    // Imm Gen (Bit extender)
-    { x: 44.5, y: 74,  w: 4, h: 14.3, label: 'IG' },
+  // Imm Gen (Bit extender)
+  { x: 44.5, y: 74, w: 4, h: 14.3, label: 'IG' },
 
-    // ID/EX pipeline 
-    { x: 52.5, y: 11.3,  w: 2.6, h: 83, label: 'ID/EX' },
+  // ID/EX pipeline 
+  { x: 52.5, y: 11.3, w: 2.6, h: 83, label: 'ID/EX' },
 ];
 
 const EX_COMPONENTS: AreaComponent[] = [
-    // MUX
-    { x: 58.8, y: 56,  w: 2.3, h: 14, label: 'MUX' },
+  // MUX
+  { x: 58.8, y: 56, w: 2.3, h: 14, label: 'MUX' },
 
-    // ALU 
-    { x: 63.5, y: 46,  w: 6, h: 18, label: 'ALU' },
+  // ALU 
+  { x: 63.5, y: 46, w: 6, h: 18, label: 'ALU' },
 
-    // EX/MEM  pipeline
-    { x: 72.3, y: 11.3,  w: 2.6, h: 83, label: 'EX/MEM' },
+  // EX/MEM  pipeline
+  { x: 72.3, y: 11.3, w: 2.6, h: 83, label: 'EX/MEM' },
 
-    // Store Bus (for store instructions)
-    { x: 56, y: 73.4,  w: 16,  h: 0.5,  label: 'Store Bus' },
-    { x: 55.8, y: 59,  w: 0.3,  h: 14.7,  label: 'Store Bus Head' },
+  // Store Bus (for store instructions)
+  { x: 56, y: 73.4, w: 16, h: 0.5, label: 'Store Bus' },
+  { x: 55.8, y: 59, w: 0.3, h: 14.7, label: 'Store Bus Head' },
 ];
 
 const MEM_COMPONENTS: AreaComponent[] = [
   // Data memory
-  { x: 77.8, y: 51.2,  w: 11.2, h: 25.5, label: 'Memory' },
+  { x: 77.8, y: 51.2, w: 11.2, h: 25.5, label: 'Memory' },
 
   // MEM/WB  pipeline
-  { x: 90.7, y: 11.3,  w: 2.6,  h: 83,   label: 'MEM/WB' },
+  { x: 90.7, y: 11.3, w: 2.6, h: 83, label: 'MEM/WB' },
 ];
 
 const WB_COMPONENTS: AreaComponent[] = [
-    // MUX 
-    { x: 96, y: 55,  w: 2.5, h: 14, label: 'MUX' },
+  // MUX 
+  { x: 96, y: 55, w: 2.5, h: 14, label: 'MUX' },
 ];
 
 
 const ALL_COMPONENTS: AreaComponent[] = [
-    ...IF_COMPONENTS,
-    ...ID_COMPONENTS,
-    ...EX_COMPONENTS,
-    ...MEM_COMPONENTS,
-    ...WB_COMPONENTS,
+  ...IF_COMPONENTS,
+  ...ID_COMPONENTS,
+  ...EX_COMPONENTS,
+  ...MEM_COMPONENTS,
+  ...WB_COMPONENTS,
 ];
 
 const GUIDE_COMPONENTS: AreaComponent[] =
@@ -81,17 +81,17 @@ const letterForIndex = (i: number) => String.fromCharCode('A'.charCodeAt(0) + i)
 
 // Distinct color per instruction index
 const colorForIndex = (i: number) => {
-  const hue = (i * 137.508) % 360; 
-  return `hsl(${hue}deg 70% 50% / 0.55)`; 
+  const hue = (i * 137.508) % 360;
+  return `hsl(${hue}deg 70% 50% / 0.55)`;
 };
 
 const getAreaByLabel = (label: string, all: AreaComponent[]) =>
   all.find((a) => a.label === label);
 
 type Props = {
-    imageSrc?: string;
-    showGuides?: boolean;
-    maxWidthPx?: number;
+  imageSrc?: string;
+  showGuides?: boolean;
+  maxWidthPx?: number;
 };
 
 
@@ -163,8 +163,8 @@ function renderAreaOverlay(
 ) {
   const halves =
     half === 'both' ? [leftHalfDiv(bg), rightHalfDiv(bg)]
-    : half === 'left' ? [leftHalfDiv(bg)]
-    : [rightHalfDiv(bg)];
+      : half === 'left' ? [leftHalfDiv(bg)]
+        : [rightHalfDiv(bg)];
 
   return (
     <div key={key} style={baseAreaStyle(area, zIndex)}>
@@ -230,19 +230,19 @@ function IfOverlays({ allAreas }: { allAreas: AreaComponent[] }) {
 
   for (let i = 0; i < instructions.length; i++) {
     const usage = registerUsage[i];
-    // Only LOAD or STORE in IF
-    if (!usage || !(usage.isLoad || isStore(usage.opcode))) continue;
+    // Remove LOAD/STORE only restriction to support all instructions
+    if (!usage) continue;
     if (instructionStages[i] !== 0) continue; // 0 = IF
 
     const label = letterForIndex(i);
     const bg = colorForIndex(i);
 
     const targets = [
-      { label: 'MUX',   half: 'both' as Half },
-      { label: 'PC',    half: 'both' as Half },
-      { label: 'Add',   half: 'both' as Half },
-      { label: 'IM',    half: 'right' as Half }, // Instruction Memory --> right
-      { label: 'IF/ID', half: 'left'  as Half }, // IF/ID --> left
+      { label: 'MUX', half: 'both' as Half },
+      { label: 'PC', half: 'both' as Half },
+      { label: 'Add', half: 'both' as Half },
+      { label: 'IM', half: 'right' as Half }, // Instruction Memory --> right
+      { label: 'IF/ID', half: 'left' as Half }, // IF/ID --> left
     ];
 
     overlays.push(
@@ -259,18 +259,18 @@ function IdOverlays({ allAreas }: { allAreas: AreaComponent[] }) {
 
   for (let i = 0; i < instructions.length; i++) {
     const usage = registerUsage[i];
-    // Only LOAD or STORE in ID
-    if (!usage || !(usage.isLoad || isStore(usage.opcode))) continue;
+    // Remove LOAD/STORE only restriction to support all instructions
+    if (!usage) continue;
     if (instructionStages[i] !== 1) continue; // 1 = ID
 
     const label = letterForIndex(i);
     const bg = colorForIndex(i);
 
     const targets = [
-      { label: 'IF/ID',     half: 'right' as Half }, // IF/ID --> right
+      { label: 'IF/ID', half: 'right' as Half }, // IF/ID --> right
       { label: 'Registers', half: 'right' as Half }, // Registers --> right
-      { label: 'IG',        half: 'both'  as Half }, // Imm Gen --> both
-      { label: 'ID/EX',     half: 'left'  as Half }, // ID/EX --> left
+      { label: 'IG', half: 'both' as Half }, // Imm Gen --> both (N/A for J but harmless)
+      { label: 'ID/EX', half: 'left' as Half }, // ID/EX --> left
     ];
 
     overlays.push(
@@ -289,17 +289,18 @@ function EXLoadOverlays() {
 
   for (let i = 0; i < instructions.length; i++) {
     const usage = registerUsage[i];
-    if (!usage || !(usage.isLoad || isStore(usage.opcode))) continue;
+    // Remove LOAD/STORE only restriction to support all instructions
+    if (!usage) continue;
     if (instructionStages[i] !== 2) continue; // 2 = EX
 
     const label = letterForIndex(i);
     const bg = colorForIndex(i);
 
     const targets = [
-      { area: find(ID_COMPONENTS, 'ID/EX'),  half: 'right' as Half }, // ID/EX --> right
-      { area: find(EX_COMPONENTS, 'MUX'),    half: 'both'  as Half }, // MUX (EX) --> both
-      { area: find(EX_COMPONENTS, 'ALU'),    half: 'both'  as Half }, // ALU --> both
-      { area: find(EX_COMPONENTS, 'EX/MEM'), half: 'left'  as Half }, // EX/MEM --> left
+      { area: find(ID_COMPONENTS, 'ID/EX'), half: 'right' as Half }, // ID/EX --> right
+      { area: find(EX_COMPONENTS, 'MUX'), half: 'both' as Half }, // MUX (EX) --> both
+      { area: find(EX_COMPONENTS, 'ALU'), half: 'both' as Half }, // ALU --> both
+      { area: find(EX_COMPONENTS, 'EX/MEM'), half: 'left' as Half }, // EX/MEM --> left
     ].filter(t => t.area);
 
     overlays.push(...buildDirectOverlays(targets, bg, 32, label, `EX-${i}`));
@@ -334,19 +335,28 @@ function MEMOverlays({ allAreas }: { allAreas: AreaComponent[] }) {
 
   for (let i = 0; i < instructions.length; i++) {
     const usage = registerUsage[i];
-    if (!usage || !(usage.isLoad || isStore(usage.opcode))) continue;
+    if (!usage) continue;
     if (instructionStages[i] !== 3) continue; // 3 = MEM
 
     const label = letterForIndex(i);
     const bg = colorForIndex(i);
 
-    // LOAD:  EX/MEM --> right, Memory --> right, MEM/WB --> left
-    // STORE: EX/MEM --> right, Memory --> left,  (no MEM/WB)
+    const isMemInst = usage.isLoad || isStore(usage.opcode);
+
+    // EX/MEM is always used to pass results
     const targets: Array<{ area?: AreaComponent; half: Half }> = [
       { area: get('EX/MEM'), half: 'right' },
-      { area: get('Memory'), half: usage.isLoad ? 'right' : 'left' },
-      ...(usage.isLoad ? [{ area: get('MEM/WB'), half: 'left' as Half }] : []),
     ];
+
+    if (isMemInst) {
+      // Memory stage is active for LOAD/STORE
+      targets.push({ area: get('Memory'), half: usage.isLoad ? 'right' : 'left' });
+    }
+
+    // MEM/WB is used for all except STORE to pass result to WB
+    if (!isStore(usage.opcode) && usage.type !== 'J') {
+      targets.push({ area: get('MEM/WB'), half: 'left' as Half });
+    }
 
     overlays.push(
       ...buildDirectOverlays(targets, bg, 33, label, `MEM-${i}`)
@@ -364,16 +374,17 @@ function WBLoadOverlays({ allAreas }: { allAreas: AreaComponent[] }) {
 
   for (let i = 0; i < instructions.length; i++) {
     const usage = registerUsage[i];
-    if (!usage || !usage.isLoad) continue;    // LOAD only in WB
+    // STORE and JUMP don't write back to registers
+    if (!usage || isStore(usage.opcode) || usage.type === 'J') continue;
     if (instructionStages[i] !== 4) continue; // 4 = WB
 
     const label = letterForIndex(i);
     const bg = colorForIndex(i);
 
     const targets: Array<{ area?: AreaComponent; half: Half }> = [
-      { area: get('Registers'), half: 'left'  }, // Registers --> left
-      { area: get('MEM/WB'),    half: 'right' }, // MEM/WB --> right
-      { area: wbMux,            half: 'both'  }, // MUX --> full
+      { area: get('Registers'), half: 'left' }, // Registers --> left (Write)
+      { area: get('MEM/WB'), half: 'right' }, // MEM/WB --> right
+      { area: wbMux, half: 'both' }, // MUX --> full
     ];
 
     overlays.push(
@@ -385,47 +396,47 @@ function WBLoadOverlays({ allAreas }: { allAreas: AreaComponent[] }) {
 }
 
 export default function GraphicPipelineVisualization({
-    imageSrc = '/datapath.jpg',
-    showGuides = true, 
-    maxWidthPx = 1200,
-    }: Props) {
-    return (
-        <div
-        className="relative w-full mx-auto"
-        style={{ maxWidth: maxWidthPx }}
-        >
-        <Image
-          src={imageSrc || datapath}          
-          alt="MIPS datapath"
-          className="w-full h-auto block select-none"
-          priority
-          draggable={false}
-          width={1200}
-          height={744} 
-        />
-        {showGuides &&
+  imageSrc = '/datapath.jpg',
+  showGuides = true,
+  maxWidthPx = 1200,
+}: Props) {
+  return (
+    <div
+      className="relative w-full mx-auto"
+      style={{ maxWidth: maxWidthPx }}
+    >
+      <Image
+        src={imageSrc || datapath}
+        alt="MIPS datapath"
+        className="w-full h-auto block select-none"
+        priority
+        draggable={false}
+        width={1200}
+        height={744}
+      />
+      {showGuides &&
         GUIDE_COMPONENTS.map((a, i) => (
-            <div
+          <div
             key={`ifc-${i}`}
             className="absolute border border-dashed border-rose-500/70 rounded-md"
             style={{
-                left: `${a.x}%`,
-                top: `${a.y}%`,
-                width: `${a.w}%`,
-                height: `${a.h}%`,
+              left: `${a.x}%`,
+              top: `${a.y}%`,
+              width: `${a.w}%`,
+              height: `${a.h}%`,
             }}
             title={a.label}
-            >
+          >
             <div className="absolute -top-6 left-0 text-xs font-semibold text-rose-700 bg-rose-100/80 px-2 py-0.5 rounded">
-                {a.label}
+              {a.label}
             </div>
-            </div>
+          </div>
         ))}
-        <IfOverlays allAreas={ALL_COMPONENTS} />
-        <IdOverlays allAreas={ALL_COMPONENTS} />
-        <EXLoadOverlays />
-        <MEMOverlays allAreas={ALL_COMPONENTS} />
-        <WBLoadOverlays allAreas={ALL_COMPONENTS} />
+      <IfOverlays allAreas={ALL_COMPONENTS} />
+      <IdOverlays allAreas={ALL_COMPONENTS} />
+      <EXLoadOverlays />
+      <MEMOverlays allAreas={ALL_COMPONENTS} />
+      <WBLoadOverlays allAreas={ALL_COMPONENTS} />
     </div>
   );
 }
