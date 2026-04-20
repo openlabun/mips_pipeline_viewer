@@ -24,6 +24,7 @@ import {
   Zap,
   StopCircle,
   Upload,
+  StepForward,
 } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
 
@@ -57,6 +58,7 @@ export function InstructionInput({
   const {
     pauseSimulation,
     resumeSimulation,
+    stepSimulation,
     setForwardingEnabled,
     setStallsEnabled,
   } = useSimulationActions();
@@ -176,25 +178,6 @@ export function InstructionInput({
   // Function to handle the change of forwarding
   const handleForwardingChange = (checked: boolean) => {
     setForwardingEnabled(checked);
-
-    // If the simulation has finished, restart it with the new configuration
-    if (hasStarted && isFinished) {
-      setTimeout(() => {
-        onReset();
-        window.dispatchEvent(new CustomEvent('pipeline:reset'));
-        setTimeout(() => {
-          const currentInstructions = inputText
-            .trim()
-            .split('\n')
-            .map((line) => line.trim())
-            .filter((line) => line.length > 0);
-
-          if (currentInstructions.length > 0) {
-            onInstructionsSubmit(currentInstructions);
-          }
-        }, 50);
-      }, 50);
-    }
   };
 
   // Function to handle the change of stalls
@@ -204,25 +187,6 @@ export function InstructionInput({
     // If stalls are disabled, also disable forwarding since it doesn't make sense
     if (!checked) {
       setForwardingEnabled(false);
-    }
-
-    // If the simulation has finished, restart it with the new configuration
-    if (hasStarted && isFinished) {
-      setTimeout(() => {
-        onReset();
-        window.dispatchEvent(new CustomEvent('pipeline:reset'));
-        setTimeout(() => {
-          const currentInstructions = inputText
-            .trim()
-            .split('\n')
-            .map((line) => line.trim())
-            .filter((line) => line.length > 0);
-
-          if (currentInstructions.length > 0) {
-            onInstructionsSubmit(currentInstructions);
-          }
-        }, 50);
-      }, 50);
     }
   };
 
@@ -381,14 +345,27 @@ export function InstructionInput({
 
           {/* Conditional Play/Pause Button: Show only when pause/resume is possible */}
           {canPauseResume && (
-            <Button
-              variant='outline'
-              onClick={handlePauseResume}
-              size='icon'
-              aria-label={isRunning ? 'Pause Simulation' : 'Resume Simulation'}
-            >
-              {isRunning ? <Pause /> : <Play />}
-            </Button>
+            <>
+              <Button
+                variant='outline'
+                onClick={handlePauseResume}
+                size='icon'
+                aria-label={isRunning ? 'Pause Simulation' : 'Resume Simulation'}
+              >
+                {isRunning ? <Pause /> : <Play />}
+              </Button>
+              {!isRunning && (
+                <Button
+                  variant='outline'
+                  onClick={stepSimulation}
+                  size='icon'
+                  aria-label='Step Simulation'
+                  title='Next Cycle'
+                >
+                  <StepForward className='w-4 h-4' />
+                </Button>
+              )}
+            </>
           )}
 
           {/* Reset Button: Show only if the simulation has started */}

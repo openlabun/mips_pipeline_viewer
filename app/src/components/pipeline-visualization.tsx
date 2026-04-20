@@ -21,7 +21,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { useSimulationState } from '@/context/SimulationContext';
+import { useSimulationState, disassembleInstruction } from '@/context/SimulationContext';
 import { Badge } from '@/components/ui/badge';
 
 const STAGES = [
@@ -76,7 +76,7 @@ export function PipelineVisualization() {
     return (
       cycleNum > expectedCycleWithoutStalls + precedingStalls &&
       cycleNum <=
-        expectedCycleWithoutStalls + precedingStalls + stalls[instIndex]
+      expectedCycleWithoutStalls + precedingStalls + stalls[instIndex]
     );
   };
 
@@ -193,15 +193,10 @@ export function PipelineVisualization() {
               {instructions.map((inst, instIndex) => (
                 <TableRow key={`inst-${instIndex}`} className='h-24'>
                   <TableCell className='font-mono sticky left-0 bg-card z-10 border-r'>
-                    {inst}
+                    {disassembleInstruction(inst, registerUsage[instIndex])}
                     {registerUsage[instIndex] && (
                       <div className='text-xs text-muted-foreground mt-1'>
-                        {registerUsage[instIndex].type}-type
-                        {registerUsage[instIndex].isLoad && ' (Load)'}: rs=$
-                        {registerUsage[instIndex].rs}, rt=$
-                        {registerUsage[instIndex].rt}
-                        {registerUsage[instIndex].rd !== 0 &&
-                          `, rd=$${registerUsage[instIndex].rd}`}
+                        0x{inst.replace(/^0x/i, '').toLowerCase()}
                       </div>
                     )}
                   </TableCell>
@@ -210,61 +205,61 @@ export function PipelineVisualization() {
                   <TableCell className='sticky left-[120px] bg-card z-10 border-r'>
                     {stallsEnabled
                       ? // Show hazard info when stalls are enabled
-                        hazards[instIndex]?.type !== 'NONE' && (
-                          <div className='flex flex-col gap-1 items-start'>
-                            <div className='flex items-start gap-1'>
-                              <Badge
-                                className={cn(
-                                  hazards[instIndex].type === 'RAW'
-                                    ? 'border-red-500 bg-red-100 text-red-500'
-                                    : 'border-yellow-500 bg-yellow-100 text-yellow-500',
-                                  'px-2 border-[1px] rounded-lg'
-                                )}
-                              >
-                                {hazards[instIndex].type}
-                              </Badge>
-                              {hazards[instIndex].canForward &&
-                                forwardings[instIndex]?.length > 0 && (
-                                  <Badge className='border px-2 bg-green-100 text-green-500 border-green-500 rounded-lg'>
-                                    FORWARDING
-                                  </Badge>
-                                )}
-                              {stalls[instIndex] > 0 && (
-                                <Badge className='border px-2 bg-red-100 text-red-500 border-red-500 rounded-lg'>
-                                  STALL ({stalls[instIndex]})
-                                </Badge>
+                      hazards[instIndex]?.type !== 'NONE' && (
+                        <div className='flex flex-col gap-1 items-start'>
+                          <div className='flex items-start gap-1'>
+                            <Badge
+                              className={cn(
+                                hazards[instIndex].type === 'RAW'
+                                  ? 'border-red-500 bg-red-100 text-red-500'
+                                  : 'border-yellow-500 bg-yellow-100 text-yellow-500',
+                                'px-2 border-[1px] rounded-lg'
                               )}
-                            </div>
-
+                            >
+                              {hazards[instIndex].type}
+                            </Badge>
                             {hazards[instIndex].canForward &&
                               forwardings[instIndex]?.length > 0 && (
-                                <div className='flex items-center gap-1'>
-                                  {forwardings[instIndex].map((fw, idx) => (
-                                    <span
-                                      key={idx}
-                                      className='text-xs border px-2 bg-black/1 text-black border-black/50 rounded-lg'
-                                    >
-                                      {fw.fromStage} {fw.register} →{' '}
-                                      {fw.toStage}
-                                    </span>
-                                  ))}
-                                </div>
+                                <Badge className='border px-2 bg-green-100 text-green-500 border-green-500 rounded-lg'>
+                                  FORWARDING
+                                </Badge>
                               )}
-                          </div>
-                        )
-                      : // Show instruction type when stalls are disabled
-                        registerUsage[instIndex] && (
-                          <div className='flex flex-col gap-1'>
-                            <Badge className='w-fit px-2 border-[1px] bg-blue-100 text-blue-500 border-blue-500 rounded-lg'>
-                              {registerUsage[instIndex].type}-TYPE
-                            </Badge>
-                            {registerUsage[instIndex].isLoad && (
-                              <Badge className='w-fit px-2 border-[1px] bg-purple-100 text-purple-500 border-purple-500 rounded-lg'>
-                                LOAD
+                            {stalls[instIndex] > 0 && (
+                              <Badge className='border px-2 bg-red-100 text-red-500 border-red-500 rounded-lg'>
+                                STALL ({stalls[instIndex]})
                               </Badge>
                             )}
                           </div>
-                        )}
+
+                          {hazards[instIndex].canForward &&
+                            forwardings[instIndex]?.length > 0 && (
+                              <div className='flex items-center gap-1'>
+                                {forwardings[instIndex].map((fw, idx) => (
+                                  <span
+                                    key={idx}
+                                    className='text-xs border px-2 bg-black/1 text-black border-black/50 rounded-lg'
+                                  >
+                                    {fw.fromStage} {fw.register} →{' '}
+                                    {fw.toStage}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                        </div>
+                      )
+                      : // Show instruction type when stalls are disabled
+                      registerUsage[instIndex] && (
+                        <div className='flex flex-col gap-1'>
+                          <Badge className='w-fit px-2 border-[1px] bg-blue-100 text-blue-500 border-blue-500 rounded-lg'>
+                            {registerUsage[instIndex].type}-TYPE
+                          </Badge>
+                          {registerUsage[instIndex].isLoad && (
+                            <Badge className='w-fit px-2 border-[1px] bg-purple-100 text-purple-500 border-purple-500 rounded-lg'>
+                              LOAD
+                            </Badge>
+                          )}
+                        </div>
+                      )}
                   </TableCell>
 
                   {cycleNumbers.map((c) => {
@@ -277,18 +272,18 @@ export function PipelineVisualization() {
                       cellState.type === 'stall'
                         ? 'bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400'
                         : cellState.type === 'forwarding'
-                        ? 'bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400'
-                        : cellState.type === 'normal'
-                        ? 'bg-secondary text-secondary-foreground'
-                        : 'bg-background';
+                          ? 'bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400'
+                          : cellState.type === 'normal'
+                            ? 'bg-secondary text-secondary-foreground'
+                            : 'bg-background';
 
                     const animationClass =
                       isActiveColumn && hasContent && isRunning && !isFinished
                         ? cellState.type === 'stall'
                           ? 'animate-pulse-bg-red'
                           : cellState.type === 'forwarding'
-                          ? 'animate-pulse-bg-green'
-                          : 'animate-pulse-bg'
+                            ? 'animate-pulse-bg-green'
+                            : 'animate-pulse-bg'
                         : '';
 
                     const highlightClass =
@@ -296,8 +291,8 @@ export function PipelineVisualization() {
                         ? cellState.type === 'stall'
                           ? 'bg-red-200 dark:bg-red-800/50'
                           : cellState.type === 'forwarding'
-                          ? 'bg-green-200 dark:bg-green-800/50'
-                          : 'bg-accent text-accent-foreground'
+                            ? 'bg-green-200 dark:bg-green-800/50'
+                            : 'bg-accent text-accent-foreground'
                         : '';
 
                     return (
