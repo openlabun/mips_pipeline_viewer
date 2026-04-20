@@ -24,6 +24,7 @@ import {
   Zap,
   StopCircle,
   Upload,
+  StepForward,
 } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
 
@@ -57,6 +58,7 @@ export function InstructionInput({
   const {
     pauseSimulation,
     resumeSimulation,
+    stepSimulation,
     setForwardingEnabled,
     setStallsEnabled,
   } = useSimulationActions();
@@ -343,14 +345,27 @@ export function InstructionInput({
 
           {/* Conditional Play/Pause Button: Show only when pause/resume is possible */}
           {canPauseResume && (
-            <Button
-              variant='outline'
-              onClick={handlePauseResume}
-              size='icon'
-              aria-label={isRunning ? 'Pause Simulation' : 'Resume Simulation'}
-            >
-              {isRunning ? <Pause /> : <Play />}
-            </Button>
+            <>
+              <Button
+                variant='outline'
+                onClick={handlePauseResume}
+                size='icon'
+                aria-label={isRunning ? 'Pause Simulation' : 'Resume Simulation'}
+              >
+                {isRunning ? <Pause /> : <Play />}
+              </Button>
+              {!isRunning && (
+                <Button
+                  variant='outline'
+                  onClick={stepSimulation}
+                  size='icon'
+                  aria-label='Step Simulation'
+                  title='Next Cycle'
+                >
+                  <StepForward className='w-4 h-4' />
+                </Button>
+              )}
+            </>
           )}
 
           {/* Reset Button: Show only if the simulation has started */}

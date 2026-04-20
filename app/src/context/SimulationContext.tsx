@@ -131,6 +131,7 @@ interface SimulationActions {
   resetSimulation: () => void;
   pauseSimulation: () => void;
   resumeSimulation: () => void;
+  stepSimulation: () => void;
   setForwardingEnabled: (enabled: boolean) => void;
   setStallsEnabled: (enabled: boolean) => void;
 }
@@ -579,6 +580,18 @@ export function SimulationProvider({ children }: PropsWithChildren) {
     });
   };
 
+  const stepSimulation = () => {
+    setSimulationState((prevState) => {
+      if (!prevState.isFinished) {
+        // Temporarily set isRunning to true just to calculate next state
+        const next = calculateNextState({ ...prevState, isRunning: true });
+        // But ensure it stays paused after the step
+        return { ...next, isRunning: false };
+      }
+      return prevState;
+    });
+  };
+
   const setForwardingEnabled = (enabled: boolean) => {
     setSimulationState((prevState) => {
       return { ...prevState, forwardingEnabled: enabled };
@@ -609,6 +622,7 @@ export function SimulationProvider({ children }: PropsWithChildren) {
       resetSimulation,
       pauseSimulation,
       resumeSimulation,
+      stepSimulation,
       setForwardingEnabled,
       setStallsEnabled,
     }),
