@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import type { HazardInfo, ForwardingInfo, RegisterName } from './PipelineDisplay';
 import { AlertTriangle, Zap, Code2, Cpu, MemoryStick, CheckSquare } from 'lucide-react';
+import { disassembleInstruction } from '@/context/SimulationContext';
 
 interface PipelineStageProps {
   stageName: RegisterName;
@@ -54,8 +55,8 @@ export function PipelineStage({
   stallCount = 0,
 }: PipelineStageProps) {
   const Icon = registerIcon[stageName];
-  const shortText = instruction && instruction !== '---' ? fmtHex(instruction) : '---';
-  const longText = fullInstruction && fullInstruction !== 'empty' ? fmtHex(fullInstruction) : 'empty';
+  const shortText = instruction && instruction !== '---' ? disassembleInstruction(instruction) : '---';
+  const longText = fullInstruction && fullInstruction !== 'empty' ? disassembleInstruction(fullInstruction) : 'empty';
   const tag = instructionIndex != null ? `[${instructionIndex}] ` : '';
 
   // Show rules bound to the *stage* of the instruction
@@ -70,27 +71,27 @@ export function PipelineStage({
     showStall
       ? 'bg-red-50 border-red-300'
       : showForward
-      ? 'bg-green-50 border-green-300'
-      : hazardType === 'RAW'
-      ? 'bg-rose-50 border-rose-300'
-      : hazardType === 'WAW'
-      ? 'bg-amber-50 border-amber-300'
-      : isActive
-      ? 'border-accent shadow-lg shadow-accent/20'
-      : 'border-border';
+        ? 'bg-green-50 border-green-300'
+        : hazardType === 'RAW'
+          ? 'bg-rose-50 border-rose-300'
+          : hazardType === 'WAW'
+            ? 'bg-amber-50 border-amber-300'
+            : isActive
+              ? 'border-accent shadow-lg shadow-accent/20'
+              : 'border-border';
 
   const titleTone =
     showStall
       ? 'text-red-700'
       : showForward
-      ? 'text-green-700'
-      : hazardType === 'RAW'
-      ? 'text-rose-700'
-      : hazardType === 'WAW'
-      ? 'text-amber-700'
-      : isActive
-      ? 'text-accent'
-      : 'text-muted-foreground';
+        ? 'text-green-700'
+        : hazardType === 'RAW'
+          ? 'text-rose-700'
+          : hazardType === 'WAW'
+            ? 'text-amber-700'
+            : isActive
+              ? 'text-accent'
+              : 'text-muted-foreground';
 
   return (
     <TooltipProvider>

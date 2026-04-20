@@ -1,6 +1,6 @@
 'use client';
 import React from 'react';
-import { useSimulationState } from '@/context/SimulationContext';
+import { useSimulationState, disassembleInstruction } from '@/context/SimulationContext';
 import Image from 'next/image';
 import datapath from '@/../public/datapath.jpg';
 
@@ -455,7 +455,7 @@ export default function GraphicPipelineVisualization({
                 <div className="flex flex-col min-w-0">
                   <div className="flex items-center gap-1">
                     <span className="font-mono font-bold text-gray-500">0x{pc}</span>
-                    <span className="font-mono truncate">0x{inst}</span>
+                    <span className="font-mono truncate">{disassembleInstruction(inst)}</span>
                   </div>
                   <div className="text-[9px] font-medium text-blue-600 bg-blue-50 px-1 rounded w-fit">
                     Stage: {stageNames[stage]}

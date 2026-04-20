@@ -30,6 +30,62 @@ interface RegisterUsage {
   isLoad: boolean; // Add this to detect load instructions
 }
 
+const getRegisterName = (reg: number): string => {
+  const names = [
+    "$zero", "$at", "$v0", "$v1", "$a0", "$a1", "$a2", "$a3",
+    "$t0", "$t1", "$t2", "$t3", "$t4", "$t5", "$t6", "$t7",
+    "$s0", "$s1", "$s2", "$s3", "$s4", "$s5", "$s6", "$s7",
+    "$t8", "$t9", "$k0", "$k1", "$gp", "$sp", "$fp", "$ra"
+  ];
+  return names[reg] || `$${reg}`;
+};
+
+export const disassembleInstruction = (hex: string, usage?: RegisterUsage): string => {
+  if (!hex) return "---";
+  if (hex.toLowerCase() === "0x00000000" || hex === "00000000") return "nop";
+
+  const u = usage || parseInstruction(hex);
+  const binary = parseInt(hex.replace(/^0x/i, ''), 16).toString(2).padStart(32, "0");
+  const immediate = parseInt(binary.substring(16, 32), 2);
+  const signedImmediate = immediate >= 0x8000 ? immediate - 0x10000 : immediate;
+  const address = parseInt(binary.substring(6, 32), 2);
+
+  const rs = getRegisterName(u.rs);
+  const rt = getRegisterName(u.rt);
+  const rd = getRegisterName(u.rd);
+
+  if (u.type === "R") {
+    const functMap: Record<number, string> = {
+      0x20: "add", 0x21: "addu", 0x24: "and", 0x08: "jr", 0x27: "nor",
+      0x25: "or", 0x2a: "slt", 0x2b: "sltu", 0x00: "sll", 0x02: "srl",
+      0x22: "sub", 0x23: "subu", 0x26: "xor"
+    };
+    const op = functMap[u.funct] || `op_${u.funct.toString(16)}`;
+    if (op === "jr") return `${op} ${rs}`;
+    if (op === "sll" || op === "srl") {
+      const shamt = parseInt(binary.substring(21, 26), 2);
+      return `${op} ${rd}, ${rt}, ${shamt}`;
+    }
+    return `${op} ${rd}, ${rs}, ${rt}`;
+  } else if (u.type === "I") {
+    const opMap: Record<number, string> = {
+      0x08: "addi", 0x09: "addiu", 0x0c: "andi", 0x04: "beq", 0x05: "bne",
+      0x0f: "lui", 0x23: "lw", 0x0d: "ori", 0x0a: "slti", 0x0b: "sltiu",
+      0x2b: "sw", 0x0e: "xori"
+    };
+    const op = opMap[u.opcode] || `op_${u.opcode.toString(16)}`;
+    if (op === "beq" || op === "bne") return `${op} ${rs}, ${rt}, ${signedImmediate}`;
+    if (op === "lui") return `${op} ${rt}, ${immediate}`;
+    if (op === "lw" || op === "sw") return `${op} ${rt}, ${signedImmediate}(${rs})`;
+    return `${op} ${rt}, ${rs}, ${immediate}`;
+  } else if (u.type === "J") {
+    const op = u.opcode === 2 ? "j" : "jal";
+    return `${op} 0x${(address << 2).toString(16).padStart(8, '0')}`;
+  }
+
+  return `0x${hex.replace(/^0x/i, '')}`;
+};
+
 interface HazardInfo {
   type: HazardType;
   description: string;
@@ -62,11 +118,11 @@ interface SimulationState {
   currentStallCycles: number;
 
   forwardingEnabled: boolean;
-  stallsEnabled: boolean; 
+  stallsEnabled: boolean;
 
   stallVictimIndex: number | null;
   nextFetchIndex: number;
-  
+
 }
 
 // Define the shape of the context actions
@@ -103,8 +159,8 @@ const initialState: SimulationState = {
   stalls: {},
   currentStallCycles: 0,
   forwardingEnabled: true,
-  stallsEnabled: true, 
-  stallVictimIndex: null, 
+  stallsEnabled: true,
+  stallVictimIndex: null,
   nextFetchIndex: 0,
 };
 
@@ -149,10 +205,10 @@ const detectHazards = (
   forwardingEnabled: boolean,
   stallsEnabled: boolean
 ): [
-  Record<number, HazardInfo>,
-  Record<number, ForwardingInfo[]>,
-  Record<number, number>
-] => {
+    Record<number, HazardInfo>,
+    Record<number, ForwardingInfo[]>,
+    Record<number, number>
+  ] => {
   const hazards: Record<number, HazardInfo> = {};
   const forwardings: Record<number, ForwardingInfo[]> = {};
   const stalls: Record<number, number> = {};

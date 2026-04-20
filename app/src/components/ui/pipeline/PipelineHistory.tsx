@@ -2,6 +2,7 @@
 
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { AlertTriangle, Zap } from 'lucide-react';
+import { disassembleInstruction } from '@/context/SimulationContext';
 
 export type RegisterName = 'IF/ID' | 'ID/EX' | 'EX/MEM' | 'MEM/WB';
 export type HistoryEntry = { hex: string | null; idx: number | null };
@@ -58,12 +59,12 @@ export function PipelineHistory({
                   showStall
                     ? 'bg-red-50'
                     : showForward
-                    ? 'bg-green-50'
-                    : showHazard && hz?.type === 'RAW'
-                    ? 'bg-rose-50'
-                    : showHazard && hz?.type === 'WAW'
-                    ? 'bg-amber-50'
-                    : 'bg-background';
+                      ? 'bg-green-50'
+                      : showHazard && hz?.type === 'RAW'
+                        ? 'bg-rose-50'
+                        : showHazard && hz?.type === 'WAW'
+                          ? 'bg-amber-50'
+                          : 'bg-background';
 
                 return (
                   <div
@@ -73,7 +74,7 @@ export function PipelineHistory({
                     <span className="text-[10px] text-muted-foreground">{index + 1}</span>
                     <div className="flex items-center justify-between gap-2">
                       <span className="truncate">
-                        {entry.hex ? `${tag}${formatHex(entry.hex)}` : 'empty'}
+                        {entry.hex ? `${tag}${disassembleInstruction(entry.hex)}` : 'empty'}
                       </span>
 
                       {/* fixed-width area to avoid layout shift */}
