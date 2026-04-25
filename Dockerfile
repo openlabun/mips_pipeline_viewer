@@ -28,6 +28,9 @@ WORKDIR /app
 # Copy the built application from the builder stage
 COPY --from=builder /app/.next ./.next
 
+# Copy the public folder for static assets
+COPY --from=builder /app/public ./public
+
 # Copy package.json for production dependencies
 COPY ./app/package*.json ./
 
