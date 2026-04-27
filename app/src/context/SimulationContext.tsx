@@ -200,6 +200,8 @@ const parseInstruction = (hexInstruction: string): RegisterUsage => {
   return { rs, rt, rd, opcode, funct, type, isLoad };
 };
 
+const isStore = (opcode: number) => opcode >= 40 && opcode <= 43;
+
 const detectHazards = (
   instructions: string[],
   registerUsage: Record<number, RegisterUsage>,
@@ -237,96 +239,123 @@ const detectHazards = (
     // Skip if current instruction is a jump
     if (currentInst.type === "J") continue;
 
-    // Only check the immediately previous instruction (distance = 1)
-    const j = i - 1;
-    const prevInst = registerUsage[j];
+    // Check back up to 3 previous instructions for dependencies
+    for (let dist = 1; dist <= 3; dist++) {
+      const j = i - dist;
+      if (j < 0) break;
 
-    // Skip if previous instruction doesn't write to any register
-    if (prevInst.rd === 0) continue;
+      const prevInst = registerUsage[j];
 
-    // Check for RAW hazards
-    let hasRawHazard = false;
-    let hazardRegister = "";
+      // Skip if previous instruction doesn't write to any register
+      if (prevInst.rd === 0) continue;
 
-    if (currentInst.rs === prevInst.rd) {
-      hasRawHazard = true;
-      hazardRegister = `rs($${currentInst.rs})`;
-    } else if (
-      (currentInst.rt === prevInst.rd && currentInst.type !== "I") ||
-      (currentInst.type === "I" && !currentInst.isLoad)
-    ) {
-      // For I-type instructions, rt might be a source (like in store instructions)
-      // or destination (like in load instructions)
-      hasRawHazard = true;
-      hazardRegister = `rt($${currentInst.rt})`;
-    }
+      // Check for RAW hazards
+      let hasRawHazard = false;
+      let hazardRegister = "";
 
-    if (hasRawHazard) {
-      if (prevInst.isLoad) {
-        // Load-use hazard: Always needs 1 stall, then can forward from MEM
-        hazards[i] = {
-          type: "RAW",
-          description: `Load-use hazard: ${hazardRegister} depends on lw in instruction ${j}`,
-          canForward: forwardingEnabled,
-          stallCycles: 1,
-        };
-        stalls[i] = 1;
-
-        if (forwardingEnabled) {
-          forwardings[i] = [
-            {
-              from: j,
-              to: i,
-              fromStage: "MEM", // Forward from MEM/WB to EX
-              toStage: "EX",
-              register: `$${prevInst.rd}`,
-            },
-          ];
-        }
-      } else {
-        // Regular RAW hazard
-        if (forwardingEnabled) {
-          // Can forward from EX/MEM to EX, no stall needed
-          hazards[i] = {
-            type: "RAW",
-            description: `RAW hazard: ${hazardRegister} depends on instruction ${j} (forwarded)`,
-            canForward: true,
-            stallCycles: 0,
-          };
-          forwardings[i] = [
-            {
-              from: j,
-              to: i,
-              fromStage: "EX", // Forward from EX/MEM to EX
-              toStage: "EX",
-              register: `$${prevInst.rd}`,
-            },
-          ];
-        } else {
-          // No forwarding: need 2 stalls for complete bubble
-          hazards[i] = {
-            type: "RAW",
-            description: `RAW hazard: ${hazardRegister} depends on instruction ${j} (no forwarding)`,
-            canForward: false,
-            stallCycles: 2,
-          };
-          stalls[i] = 2;
+      if (currentInst.rs === prevInst.rd) {
+        hasRawHazard = true;
+        hazardRegister = `rs(${getRegisterName(currentInst.rs)})`;
+      } else if (currentInst.type === "R" && currentInst.rt === prevInst.rd) {
+        // R-type uses both rs and rt as sources
+        hasRawHazard = true;
+        hazardRegister = `rt(${getRegisterName(currentInst.rt)})`;
+      } else if (isStore(currentInst.opcode) && currentInst.rt === prevInst.rd) {
+        // Store uses rt as source (data to be stored)
+        hasRawHazard = true;
+        hazardRegister = `rt(${getRegisterName(currentInst.rt)})`;
+      } else if (currentInst.opcode === 4 || currentInst.opcode === 5) {
+        // Branch instructions use both rs and rt as sources
+        if (currentInst.rt === prevInst.rd) {
+          hasRawHazard = true;
+          hazardRegister = `rt(${getRegisterName(currentInst.rt)})`;
         }
       }
-    }
 
-    // Check for WAW hazards (only for instructions that write to the same register)
-    if (
-      currentInst.rd !== 0 &&
-      currentInst.rd === prevInst.rd &&
-      !hasRawHazard
-    ) {
-      hazards[i] = {
-        type: "WAW",
-        description: `WAW hazard: Both instructions write to $${currentInst.rd}`,
-        canForward: true,
-        stallCycles: 0,
-      };
+      if (hasRawHazard) {
+        if (forwardingEnabled) {
+          // With forwarding, we only care if distance is 1 and it's a load-use
+          if (dist === 1 && prevInst.isLoad) {
+            hazards[i] = {
+              type: "RAW",
+              description: `Load-use hazard: ${hazardRegister} depends on lw in instruction ${j}`,
+              canForward: true,
+              stallCycles: 1,
+            };
+            stalls[i] = Math.max(stalls[i], 1);
+            forwardings[i].push({
+              from: j,
+              to: i,
+              fromStage: "MEM",
+              toStage: "EX",
+              register: getRegisterName(prevInst.rd),
+            });
+          } else if (dist === 1) {
+            // Regular RAW distance 1 with forwarding: 0 stalls
+            hazards[i] = {
+              type: "RAW",
+              description: `RAW hazard: ${hazardRegister} depends on ${j} (forwarded from EX)`,
+              canForward: true,
+              stallCycles: 0,
+            };
+            forwardings[i].push({
+              from: j,
+              to: i,
+              fromStage: "EX",
+              toStage: "EX",
+              register: getRegisterName(prevInst.rd),
+            });
+          } else if (dist === 2) {
+            // Distance 2 with forwarding: 0 stalls
+            hazards[i] = {
+              type: "RAW",
+              description: `RAW hazard: ${hazardRegister} depends on ${j} (forwarded from MEM)`,
+              canForward: true,
+              stallCycles: 0,
+            };
+            forwardings[i].push({
+              from: j,
+              to: i,
+              fromStage: "MEM",
+              toStage: "EX",
+              register: getRegisterName(prevInst.rd),
+            });
+          }
+        } else {
+          // No forwarding: stall until producer is about to exit WB
+          // Dist 1: needs 2 stalls. (Tick 1: Producer in EX, Tick 2: Producer in MEM)
+          //         Next tick: Producer in WB (writes) AND current in ID (reads).
+          // Dist 2: needs 1 stall. (Tick 1: Producer in MEM)
+          //         Next tick: Producer in WB AND current in ID.
+          // Dist 3: needs 0 stalls. 
+          //         Already at Tick 1: Producer in WB AND current in ID.
+          const neededStalls = 3 - dist;
+          if (neededStalls > 0 && neededStalls > stalls[i]) {
+            stalls[i] = neededStalls;
+            hazards[i] = {
+              type: "RAW",
+              description: `RAW hazard: ${hazardRegister} depends on ${j}. Stalling ${neededStalls} cycles until ${j} reaches WB stage.`,
+              canForward: false,
+              stallCycles: neededStalls,
+            };
+          }
+        }
+      }
+
+      // Check for WAW hazards
+      if (
+        currentInst.rd !== 0 &&
+        currentInst.rd === prevInst.rd &&
+        !hasRawHazard &&
+        dist === 1
+      ) {
+        hazards[i] = {
+          type: "WAW",
+          description: `WAW hazard: Both instructions write to ${getRegisterName(currentInst.rd)}`,
+          canForward: true,
+          stallCycles: 0,
+        };
+      }
     }
   }
 
@@ -375,15 +404,16 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
   let stallVictimIndex = currentState.stallVictimIndex;
 
   if (currentState.currentStallCycles > 0) {
-    // Freeze IF (stage 0) and ID (stage 1); advance only EX/MEM/WB by +1
+    // Freeze IF (stage 0); advance only ID/EX/MEM/WB by +1
+    // Note: To the user, the stalled instruction stays in IF/ID.
     for (const [iStr, s] of Object.entries(prev)) {
       const i = Number(iStr);
       if (s === null) {
-        newStages[i] = null;        // still not fetched 
-      } else if (s >= 2) {
-        newStages[i] = adv(s);      // front keeps moving
+        newStages[i] = null;
+      } else if (s >= 1) {
+        newStages[i] = adv(s);      // Everything from ID onwards moves
       } else {
-        newStages[i] = s;           // IF and ID frozen
+        newStages[i] = s;           // Instruction in IF stage (IF/ID register) stays frozen
       }
     }
 
@@ -421,16 +451,18 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
   // If we just finished a stall last tick, promote ID -> EX 
   if (currentState.stallVictimIndex !== null) {
     const k = currentState.stallVictimIndex;
-    if (prev[k] === 1) {
-      newStages[k] = 2;
+    // Instruction is in IF/ID (stage 0 for the simulator logic context, but actually stage 1 in common pipeline terms)
+    // The previous logic stayed in stage 1 (ID), but now we ensure it stays in stage 0 (IF/ID) if stalling
+    if (prev[k] === 0) {
+      newStages[k] = 1;
     }
     stallVictimIndex = null; // clear after promotion
   }
 
-  // Check if any instruction is now in ID and requires stalls to schedule for next tick
+  // Check if any instruction is now in IF/ID (stage 0) and requires stalls to schedule for next tick
   for (const [iStr, s] of Object.entries(newStages)) {
     const i = Number(iStr);
-    if (s === 1 && (currentState.stalls[i] || 0) > 0) {
+    if (s === 0 && (currentState.stalls[i] || 0) > 0) {
       nextStallCycles = currentState.stalls[i];
       stallVictimIndex = i;
       break; // only the closest hazard 

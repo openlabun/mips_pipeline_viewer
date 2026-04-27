@@ -60,38 +60,33 @@ export function PipelineStage({
   const tag = instructionIndex != null ? `[${instructionIndex}] ` : '';
 
   // Show rules bound to the *stage* of the instruction
-  const showStall = stageName === 'ID/EX' && stallCount > 0;         // stalls are inserted in ID
   const showForward = stageName === 'EX/MEM' && forwardings.length > 0; // forwarding happens in EX
-  const showHazard = stageName === 'ID/EX' && (hazard?.type ?? 'NONE') !== 'NONE';
+  const showHazard = stageName === 'IF/ID' && (hazard?.type ?? 'NONE') !== 'NONE';
 
   const hazardType = showHazard ? (hazard?.type ?? 'NONE') : 'NONE';
 
-  // Card color priority: stall > forward > RAW > WAW > active > normal
+  // Card color priority: forward > RAW > WAW > active > normal
   const cardTone =
-    showStall
-      ? 'bg-red-50 border-red-300'
-      : showForward
-        ? 'bg-green-50 border-green-300'
-        : hazardType === 'RAW'
-          ? 'bg-rose-50 border-rose-300'
-          : hazardType === 'WAW'
-            ? 'bg-amber-50 border-amber-300'
-            : isActive
-              ? 'border-accent shadow-lg shadow-accent/20'
-              : 'border-border';
+    showForward
+      ? 'bg-green-50 border-green-300'
+      : hazardType === 'RAW'
+        ? 'bg-rose-50 border-rose-300'
+        : hazardType === 'WAW'
+          ? 'bg-amber-50 border-amber-300'
+          : isActive
+            ? 'border-accent shadow-lg shadow-accent/20'
+            : 'border-border';
 
   const titleTone =
-    showStall
-      ? 'text-red-700'
-      : showForward
-        ? 'text-green-700'
-        : hazardType === 'RAW'
-          ? 'text-rose-700'
-          : hazardType === 'WAW'
-            ? 'text-amber-700'
-            : isActive
-              ? 'text-accent'
-              : 'text-muted-foreground';
+    showForward
+      ? 'text-green-700'
+      : hazardType === 'RAW'
+        ? 'text-rose-700'
+        : hazardType === 'WAW'
+          ? 'text-amber-700'
+          : isActive
+            ? 'text-accent'
+            : 'text-muted-foreground';
 
   return (
     <TooltipProvider>
@@ -102,7 +97,7 @@ export function PipelineStage({
               'text-center w-full h-full',
               // Very subtle color/opacity/shadow transitions
               'transition-[background-color,border-color,box-shadow,transform,opacity] duration-400',
-              (isActive || showStall || showForward || showHazard) ? 'opacity-100' : 'opacity-70',
+              (isActive || showForward || showHazard) ? 'opacity-100' : 'opacity-70',
               cardTone,
             ].join(' ')}
           >
@@ -125,7 +120,7 @@ export function PipelineStage({
                 className={[
                   'font-mono text-xs md:text-sm truncate bg-muted/50 rounded-md p-2 h-9 flex items-center justify-center',
                   'transition-[background-color,color,opacity] duration-300',
-                  (isActive || showStall || showForward || showHazard) ? 'opacity-100' : 'opacity-85',
+                  (isActive || showForward || showHazard) ? 'opacity-100' : 'opacity-85',
                 ].join(' ')}
               >
                 {shortText === '---' ? '---' : `${tag}${shortText}`}
@@ -140,15 +135,6 @@ export function PipelineStage({
                 ) : showHazard && hazardType === 'WAW' ? (
                   <Chip className="bg-amber-100 text-amber-700 border-amber-200 transition-opacity duration-300 opacity-100">
                     <AlertTriangle className="w-3 h-3" /> WAW
-                  </Chip>
-                ) : (
-                  <span className="h-5 px-2 rounded-full border border-transparent opacity-0 transition-opacity duration-300" />
-                )}
-
-                {/* STALL slot */}
-                {showStall ? (
-                  <Chip className="bg-red-100 text-red-700 border-red-200 transition-opacity duration-300 opacity-100">
-                    <AlertTriangle className="w-3 h-3" /> stall ×{stallCount}
                   </Chip>
                 ) : (
                   <span className="h-5 px-2 rounded-full border border-transparent opacity-0 transition-opacity duration-300" />

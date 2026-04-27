@@ -1,8 +1,8 @@
 'use client';
 
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { AlertTriangle, Zap } from 'lucide-react';
 import { disassembleInstruction } from '@/context/SimulationContext';
+import { useRef } from 'react';
 
 export type RegisterName = 'IF/ID' | 'ID/EX' | 'EX/MEM' | 'MEM/WB';
 export type HistoryEntry = { hex: string | null; idx: number | null };
@@ -17,19 +17,10 @@ const stageDetails: Record<RegisterName, { name: string }> = {
   'MEM/WB': { name: 'MEM/WB Register' },
 };
 
-const formatHex = (v: string | null) => {
-  if (!v) return 'empty';
-  const raw = v.startsWith('0x') ? v.slice(2) : v;
-  if (raw.toLowerCase() === '00000000') return 'nop';
-  return '0x' + raw.toLowerCase();
-};
-
-
 export function PipelineHistory({
   history,
   hazards,
   forwardings,
-  stalls,
 }: {
   history: HistoryDict;
   hazards: Record<number, { type: HazardType }>;
@@ -38,33 +29,53 @@ export function PipelineHistory({
 }) {
   const registers = Object.keys(history) as RegisterName[];
 
+  // Refs for each scrollable container to synchronize them
+  const scrollRefs: Record<RegisterName, React.RefObject<HTMLDivElement>> = {
+    'IF/ID': useRef<HTMLDivElement>(null) as React.RefObject<HTMLDivElement>,
+    'ID/EX': useRef<HTMLDivElement>(null) as React.RefObject<HTMLDivElement>,
+    'EX/MEM': useRef<HTMLDivElement>(null) as React.RefObject<HTMLDivElement>,
+    'MEM/WB': useRef<HTMLDivElement>(null) as React.RefObject<HTMLDivElement>,
+  };
+
+  const handleScroll = (e: React.UIEvent<HTMLDivElement>, source: RegisterName) => {
+    const targetScrollTop = e.currentTarget.scrollTop;
+    registers.forEach((reg) => {
+      if (reg !== source) {
+        const ref = scrollRefs[reg].current;
+        if (ref && ref.scrollTop !== targetScrollTop) {
+          ref.scrollTop = targetScrollTop;
+        }
+      }
+    });
+  };
+
   return (
     <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
       {registers.map((reg) => (
-        <div key={reg}>
+        <div key={reg} className="flex flex-col">
           <h3 className="font-semibold text-center mb-2">{stageDetails[reg].name}</h3>
-          <ScrollArea className="h-64 rounded-md border bg-muted/20">
+          <div
+            ref={scrollRefs[reg]}
+            onScroll={(e) => handleScroll(e, reg)}
+            className="h-64 rounded-md border bg-muted/20 overflow-y-auto scrollbar-thin scrollbar-thumb-muted-foreground/20"
+          >
             <div className="p-2 space-y-1">
               {history[reg].map((entry, index) => {
                 const tag = entry.idx != null ? `[${entry.idx}] ` : '';
                 const hz = entry.idx != null ? hazards[entry.idx] : undefined;
                 const hasFwd = entry.idx != null ? (forwardings[entry.idx]?.length ?? 0) > 0 : false;
-                const stallCount = entry.idx != null ? (stalls[entry.idx] ?? 0) : 0;
 
-                const showHazard = reg === 'ID/EX' && hz?.type && hz.type !== 'NONE';
-                const showStall = reg === 'ID/EX' && stallCount > 0;
+                const showHazard = reg === 'IF/ID' && hz?.type && hz.type !== 'NONE';
                 const showForward = reg === 'EX/MEM' && hasFwd;
 
                 const rowTone =
-                  showStall
-                    ? 'bg-red-50'
-                    : showForward
-                      ? 'bg-green-50'
-                      : showHazard && hz?.type === 'RAW'
-                        ? 'bg-rose-50'
-                        : showHazard && hz?.type === 'WAW'
-                          ? 'bg-amber-50'
-                          : 'bg-background';
+                  showForward
+                    ? 'bg-green-50'
+                    : showHazard && hz?.type === 'RAW'
+                      ? 'bg-rose-50'
+                      : showHazard && hz?.type === 'WAW'
+                        ? 'bg-amber-50'
+                        : 'bg-background';
 
                 return (
                   <div
@@ -77,19 +88,10 @@ export function PipelineHistory({
                         {entry.hex ? `${tag}${disassembleInstruction(entry.hex)}` : 'empty'}
                       </span>
 
-                      {/* fixed-width area to avoid layout shift */}
                       <div className="flex items-center gap-1 shrink-0 w-[140px] justify-end">
                         {showHazard && hz?.type === 'RAW' ? (
                           <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium border bg-rose-100 text-rose-700 border-rose-200 transition-all duration-300">
                             <AlertTriangle className="w-3 h-3" /> RAW
-                          </span>
-                        ) : (
-                          <span className="h-5 px-1.5 rounded-full border border-transparent opacity-0" />
-                        )}
-
-                        {showStall ? (
-                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium border bg-red-100 text-red-700 border-red-200 transition-all duration-300">
-                            <AlertTriangle className="w-3 h-3" /> stall ×{stallCount}
                           </span>
                         ) : (
                           <span className="h-5 px-1.5 rounded-full border border-transparent opacity-0" />
@@ -108,7 +110,7 @@ export function PipelineHistory({
                 );
               })}
             </div>
-          </ScrollArea>
+          </div>
         </div>
       ))}
     </div>
