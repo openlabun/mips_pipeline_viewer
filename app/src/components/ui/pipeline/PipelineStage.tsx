@@ -60,9 +60,9 @@ export function PipelineStage({
   const tag = instructionIndex != null ? `[${instructionIndex}] ` : '';
 
   // Show rules bound to the *stage* of the instruction
-  const showStall = stageName === 'ID/EX' && stallCount > 0;         // stalls are inserted in ID
+  const showStall = stageName === 'IF/ID' && stallCount > 0;         // stalls are inserted in ID
   const showForward = stageName === 'EX/MEM' && forwardings.length > 0; // forwarding happens in EX
-  const showHazard = stageName === 'ID/EX' && (hazard?.type ?? 'NONE') !== 'NONE';
+  const showHazard = stageName === 'IF/ID' && (hazard?.type ?? 'NONE') !== 'NONE';
 
   const hazardType = showHazard ? (hazard?.type ?? 'NONE') : 'NONE';
 

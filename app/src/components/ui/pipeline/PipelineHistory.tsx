@@ -51,8 +51,8 @@ export function PipelineHistory({
                 const hasFwd = entry.idx != null ? (forwardings[entry.idx]?.length ?? 0) > 0 : false;
                 const stallCount = entry.idx != null ? (stalls[entry.idx] ?? 0) : 0;
 
-                const showHazard = reg === 'ID/EX' && hz?.type && hz.type !== 'NONE';
-                const showStall = reg === 'ID/EX' && stallCount > 0;
+                const showHazard = reg === 'IF/ID' && hz?.type && hz.type !== 'NONE';
+                const showStall = reg === 'IF/ID' && stallCount > 0;
                 const showForward = reg === 'EX/MEM' && hasFwd;
 
                 const rowTone =
