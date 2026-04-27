@@ -401,15 +401,16 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
   let stallVictimIndex = currentState.stallVictimIndex;
 
   if (currentState.currentStallCycles > 0) {
-    // Freeze IF (stage 0) and ID (stage 1); advance only EX/MEM/WB by +1
+    // Freeze IF (stage 0); advance only ID/EX/MEM/WB by +1
+    // Note: To the user, the stalled instruction stays in IF/ID.
     for (const [iStr, s] of Object.entries(prev)) {
       const i = Number(iStr);
       if (s === null) {
-        newStages[i] = null;        // still not fetched 
-      } else if (s >= 2) {
-        newStages[i] = adv(s);      // front keeps moving
+        newStages[i] = null;
+      } else if (s >= 1) {
+        newStages[i] = adv(s);      // Everything from ID onwards moves
       } else {
-        newStages[i] = s;           // IF and ID frozen
+        newStages[i] = s;           // Instruction in IF stage (IF/ID register) stays frozen
       }
     }
 
@@ -447,16 +448,18 @@ const calculateNextState = (currentState: SimulationState): SimulationState => {
   // If we just finished a stall last tick, promote ID -> EX 
   if (currentState.stallVictimIndex !== null) {
     const k = currentState.stallVictimIndex;
-    if (prev[k] === 1) {
-      newStages[k] = 2;
+    // Instruction is in IF/ID (stage 0 for the simulator logic context, but actually stage 1 in common pipeline terms)
+    // The previous logic stayed in stage 1 (ID), but now we ensure it stays in stage 0 (IF/ID) if stalling
+    if (prev[k] === 0) {
+      newStages[k] = 1;
     }
     stallVictimIndex = null; // clear after promotion
   }
 
-  // Check if any instruction is now in ID and requires stalls to schedule for next tick
+  // Check if any instruction is now in IF/ID (stage 0) and requires stalls to schedule for next tick
   for (const [iStr, s] of Object.entries(newStages)) {
     const i = Number(iStr);
-    if (s === 1 && (currentState.stalls[i] || 0) > 0) {
+    if (s === 0 && (currentState.stalls[i] || 0) > 0) {
       nextStallCycles = currentState.stalls[i];
       stallVictimIndex = i;
       break; // only the closest hazard 
