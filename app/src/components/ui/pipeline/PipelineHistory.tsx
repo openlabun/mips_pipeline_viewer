@@ -52,19 +52,16 @@ export function PipelineHistory({
                 const stallCount = entry.idx != null ? (stalls[entry.idx] ?? 0) : 0;
 
                 const showHazard = reg === 'IF/ID' && hz?.type && hz.type !== 'NONE';
-                const showStall = reg === 'IF/ID' && stallCount > 0;
                 const showForward = reg === 'EX/MEM' && hasFwd;
 
                 const rowTone =
-                  showStall
-                    ? 'bg-red-50'
-                    : showForward
-                      ? 'bg-green-50'
-                      : showHazard && hz?.type === 'RAW'
-                        ? 'bg-rose-50'
-                        : showHazard && hz?.type === 'WAW'
-                          ? 'bg-amber-50'
-                          : 'bg-background';
+                  showForward
+                    ? 'bg-green-50'
+                    : showHazard && hz?.type === 'RAW'
+                      ? 'bg-rose-50'
+                      : showHazard && hz?.type === 'WAW'
+                        ? 'bg-amber-50'
+                        : 'bg-background';
 
                 return (
                   <div
@@ -82,14 +79,6 @@ export function PipelineHistory({
                         {showHazard && hz?.type === 'RAW' ? (
                           <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium border bg-rose-100 text-rose-700 border-rose-200 transition-all duration-300">
                             <AlertTriangle className="w-3 h-3" /> RAW
-                          </span>
-                        ) : (
-                          <span className="h-5 px-1.5 rounded-full border border-transparent opacity-0" />
-                        )}
-
-                        {showStall ? (
-                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium border bg-red-100 text-red-700 border-red-200 transition-all duration-300">
-                            <AlertTriangle className="w-3 h-3" /> stall ×{stallCount}
                           </span>
                         ) : (
                           <span className="h-5 px-1.5 rounded-full border border-transparent opacity-0" />
