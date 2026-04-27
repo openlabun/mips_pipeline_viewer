@@ -329,7 +329,7 @@ const detectHazards = (
           //         Next tick: Producer in WB AND current in ID.
           // Dist 3: needs 0 stalls. 
           //         Already at Tick 1: Producer in WB AND current in ID.
-          const neededStalls = 3 - dist; 
+          const neededStalls = 3 - dist;
           if (neededStalls > 0 && neededStalls > stalls[i]) {
             stalls[i] = neededStalls;
             hazards[i] = {
