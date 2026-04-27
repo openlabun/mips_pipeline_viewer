@@ -53,7 +53,7 @@ export function PipelineHistory({
       {registers.map((reg) => (
         <div key={reg} className="flex flex-col">
           <h3 className="font-semibold text-center mb-2">{stageDetails[reg].name}</h3>
-          <div 
+          <div
             ref={scrollRefs[reg]}
             onScroll={(e) => handleScroll(e, reg)}
             className="h-64 rounded-md border bg-muted/20 overflow-y-auto scrollbar-thin scrollbar-thumb-muted-foreground/20"
