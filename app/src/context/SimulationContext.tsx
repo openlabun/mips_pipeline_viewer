@@ -322,16 +322,19 @@ const detectHazards = (
             });
           }
         } else {
-          // No forwarding: stall until producer exits WB
-          // Dist 1: needs 3 stalls (to wait for producer's EX, MEM, WB)
-          // Dist 2: needs 2 stalls (to wait for producer's MEM, WB)
-          // Dist 3: needs 1 stall (to wait for producer's WB)
-          const neededStalls = 4 - dist;
-          if (neededStalls > stalls[i]) {
+          // No forwarding: stall until producer is about to exit WB
+          // Dist 1: needs 2 stalls. (Tick 1: Producer in EX, Tick 2: Producer in MEM)
+          //         Next tick: Producer in WB (writes) AND current in ID (reads).
+          // Dist 2: needs 1 stall. (Tick 1: Producer in MEM)
+          //         Next tick: Producer in WB AND current in ID.
+          // Dist 3: needs 0 stalls. 
+          //         Already at Tick 1: Producer in WB AND current in ID.
+          const neededStalls = 3 - dist; 
+          if (neededStalls > 0 && neededStalls > stalls[i]) {
             stalls[i] = neededStalls;
             hazards[i] = {
               type: "RAW",
-              description: `RAW hazard: ${hazardRegister} depends on ${j}. Stalling ${neededStalls} cycles until ${j} exits pipeline.`,
+              description: `RAW hazard: ${hazardRegister} depends on ${j}. Stalling ${neededStalls} cycles until ${j} reaches WB stage.`,
               canForward: false,
               stallCycles: neededStalls,
             };
