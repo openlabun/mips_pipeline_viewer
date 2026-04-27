@@ -29,11 +29,12 @@ export function PipelineHistory({
 }) {
   const registers = Object.keys(history) as RegisterName[];
 
-  const scrollRefs: Record<RegisterName, React.RefObject<HTMLDivElement | null>> = {
-    'IF/ID': useRef<HTMLDivElement>(null),
-    'ID/EX': useRef<HTMLDivElement>(null),
-    'EX/MEM': useRef<HTMLDivElement>(null),
-    'MEM/WB': useRef<HTMLDivElement>(null),
+  // Refs for each scrollable container to synchronize them
+  const scrollRefs: Record<RegisterName, React.RefObject<HTMLDivElement>> = {
+    'IF/ID': useRef<HTMLDivElement>(null) as React.RefObject<HTMLDivElement>,
+    'ID/EX': useRef<HTMLDivElement>(null) as React.RefObject<HTMLDivElement>,
+    'EX/MEM': useRef<HTMLDivElement>(null) as React.RefObject<HTMLDivElement>,
+    'MEM/WB': useRef<HTMLDivElement>(null) as React.RefObject<HTMLDivElement>,
   };
 
   const handleScroll = (e: React.UIEvent<HTMLDivElement>, source: RegisterName) => {
