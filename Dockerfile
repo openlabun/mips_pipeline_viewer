@@ -1,41 +1,45 @@
+# ─────────────────────────────────────────
 # Build stage
+# ─────────────────────────────────────────
 FROM node:22.0.0-slim AS builder
 
-# Set the working directory
 WORKDIR /app
 
-# Copy package.json and package-lock.json for dependency installation
-COPY ./app/package*.json ./
+# Copiar ambos archivos explícitamente
+COPY ./app/package.json ./app/package-lock.json ./
 
-# Install dependencies
+# npm ci garantiza build reproducible con el lock file
 RUN npm ci
 
-# Copy the rest of the application files
 COPY ./app/ ./
 
-# Build the application
 RUN npm run build
 
+# ─────────────────────────────────────────
 # Production stage
+# ─────────────────────────────────────────
 FROM node:22.0.0-slim AS runner
 
-# Set environment to production
 ENV NODE_ENV=production
 
-# Set the working directory
+# Buena práctica: no correr como root
+RUN addgroup --system --gid 1001 nodejs && \
+    adduser --system --uid 1001 nextjs
+
 WORKDIR /app
 
-# Copy the built application from the builder stage
-COPY --from=builder /app/.next ./.next
+# Copiar solo lo necesario del builder
+COPY --from=builder --chown=nextjs:nodejs /app/public ./public
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
-# Copy package.json for production dependencies
-COPY ./app/package*.json ./
+# Usar el usuario no-root
+USER nextjs
 
-# Install only production dependencies
-RUN npm ci --omit=dev --ignore-scripts
-
-# Expose the application port
 EXPOSE 3000
 
-# Command to start the application
-CMD ["npm", "start"]
+ENV PORT=3000
+ENV HOSTNAME="0.0.0.0"
+
+# Next.js genera un server.js standalone, úsalo directamente
+CMD ["node", "server.js"]
