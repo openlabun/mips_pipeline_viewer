@@ -32,7 +32,7 @@ COPY --from=builder /app/.next ./.next
 COPY ./app/package*.json ./
 
 # Install only production dependencies
-RUN npm install --only=production
+RUN npm ci --omit=dev --ignore-scripts
 
 # Expose the application port
 EXPOSE 3000
